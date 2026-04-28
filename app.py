@@ -3,9 +3,9 @@ import pandas as pd
 from datetime import date, timedelta
 
 from data_manager import (
-    HAZARD_CATEGORIES, DEPARTMENTS, classify_risk,
-    load_data, save_entry, delete_entry, update_status, get_summary_stats,
+    HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats,
 )
+from database import load_data, save_entry, delete_entry, update_status
 from visualizations import (
     risk_matrix_heatmap, hazard_bar_chart,
     department_risk_chart, risk_trend_chart, risk_reduction_chart,
