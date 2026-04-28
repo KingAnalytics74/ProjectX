@@ -46,6 +46,8 @@ def load_data() -> pd.DataFrame:
     if os.path.exists(DATA_FILE):
         df = pd.read_csv(DATA_FILE, parse_dates=["date", "review_date"])
         return df
+    if os.path.exists("seed_data.csv"):
+        return pd.read_csv("seed_data.csv", parse_dates=["date", "review_date"])
     return pd.DataFrame(columns=COLUMNS)
 
 
