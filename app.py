@@ -25,7 +25,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Navigate",
-        ["📋 New Assessment", "📊 Dashboard", "📁 All Assessments", "ℹ️ About"],
+        ["📋 New Assessment", "📊 Dashboard", "🔔 Alerts & Insights", "📁 All Assessments", "ℹ️ About"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -37,6 +37,13 @@ with st.sidebar:
     high_count = stats["very_high"] + stats["high"]
     colour = "red" if high_count > 0 else "green"
     st.markdown(f"**High/Very High:** :{colour}[{high_count}]")
+
+    if not df_all.empty:
+        _active = df_all[df_all["status"] != "Closed"].copy()
+        _active["review_date"] = pd.to_datetime(_active["review_date"])
+        _overdue = len(_active[_active["review_date"] < pd.Timestamp(date.today())])
+        _oc = "red" if _overdue > 0 else "green"
+        st.markdown(f"**Overdue Reviews:** :{_oc}[{_overdue}]")
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
@@ -239,7 +246,128 @@ elif page == "📊 Dashboard":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGE 3 — All Assessments
+# PAGE 3 — Alerts & Insights
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "🔔 Alerts & Insights":
+    st.title("🔔 Alerts & Insights")
+    st.caption("Data-driven safety intelligence — overdue reviews, risk velocity, and keyword analysis.")
+
+    df = load_data()
+    if df.empty:
+        st.info("No assessments yet.")
+        st.stop()
+
+    today_ts = pd.Timestamp(date.today())
+
+    # ── Overdue Reviews ───────────────────────────────────────────────────────
+    st.subheader("📅 Overdue Review Alerts")
+
+    active = df[df["status"] != "Closed"].copy()
+    active["review_date"] = pd.to_datetime(active["review_date"])
+    overdue = active[active["review_date"] < today_ts].copy()
+    overdue["days_overdue"] = (today_ts - overdue["review_date"]).dt.days
+    overdue = overdue.sort_values("days_overdue", ascending=False)
+
+    if overdue.empty:
+        st.success("All active assessments are within their review window.")
+    else:
+        st.error(f"**{len(overdue)} assessment(s) overdue for review.**")
+        st.dataframe(
+            overdue[["id", "department", "location", "hazard_category",
+                      "risk_level", "review_date", "days_overdue", "status"]].rename(columns={
+                "id": "ID", "department": "Dept", "location": "Location",
+                "hazard_category": "Hazard", "risk_level": "Level",
+                "review_date": "Due Date", "days_overdue": "Days Overdue", "status": "Status",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+    st.divider()
+
+    # ── Risk Velocity ─────────────────────────────────────────────────────────
+    st.subheader("📈 Department Risk Velocity")
+    st.caption("Average risk score: last 60 days vs prior 60-day period. Green = improving, Red = worsening.")
+
+    df["date"] = pd.to_datetime(df["date"])
+    recent_mask = df["date"] >= (today_ts - pd.Timedelta(days=60))
+    prior_mask  = (df["date"] >= (today_ts - pd.Timedelta(days=120))) & (df["date"] < (today_ts - pd.Timedelta(days=60)))
+
+    recent_avg = df[recent_mask].groupby("department")["risk_score"].mean()
+    prior_avg  = df[prior_mask].groupby("department")["risk_score"].mean()
+
+    # Fall back to first-half / second-half split if date windows are too sparse
+    if recent_avg.empty or prior_avg.empty:
+        half = len(df) // 2
+        if half > 0:
+            recent_avg = df.iloc[half:].groupby("department")["risk_score"].mean()
+            prior_avg  = df.iloc[:half].groupby("department")["risk_score"].mean()
+            st.caption("_Using record order split — add more dated data for time-based velocity._")
+
+    all_depts = sorted(set(recent_avg.index) | set(prior_avg.index))
+    if all_depts:
+        cols = st.columns(min(len(all_depts), 5))
+        for i, dept in enumerate(all_depts):
+            r = recent_avg.get(dept)
+            p = prior_avg.get(dept)
+            col = cols[i % len(cols)]
+            if r is not None and p is not None:
+                col.metric(dept[:14], f"{r:.1f}", delta=f"{r - p:+.1f}", delta_color="inverse")
+            elif r is not None:
+                col.metric(dept[:14], f"{r:.1f}", delta="New")
+            else:
+                col.metric(dept[:14], f"{p:.1f}", delta="No recent data", delta_color="off")
+
+    st.divider()
+
+    # ── Keyword Intelligence ──────────────────────────────────────────────────
+    st.subheader("🔍 Keyword Intelligence")
+    st.caption("Scanning hazard descriptions for language that indicates elevated concern.")
+
+    CRITICAL_KW  = ["collapse", "explosion", "fatality", "electrocution",
+                    "asphyxiation", "engulfment", "entrapment", "drowning"]
+    HIGH_KW      = ["toxic", "corrosive", "flammable", "fracture", "amputation",
+                    "burn", "entanglement", "crush", "fall from height", "serious injury"]
+    CONCERN_KW   = ["pain", "stress", "near miss", "strain", "fatigue",
+                    "anxiety", "overload", "pressure", "discomfort", "repetitive"]
+
+    def scan(keywords: list) -> list:
+        hits = []
+        for _, row in df.iterrows():
+            text = f"{row.get('hazard_description', '')} {row.get('existing_controls', '')}".lower()
+            found = [kw for kw in keywords if kw in text]
+            if found:
+                hits.append({
+                    "ID": int(row["id"]), "Department": row["department"],
+                    "Hazard": row["hazard_category"],
+                    "Keywords Found": ", ".join(found),
+                    "Risk Level": row["risk_level"], "Status": row["status"],
+                })
+        return hits
+
+    critical_hits = scan(CRITICAL_KW)
+    high_hits     = scan(HIGH_KW)
+    concern_hits  = scan(CONCERN_KW)
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Critical Terms Detected",   len(critical_hits))
+    m2.metric("High Concern Terms",        len(high_hits))
+    m3.metric("General Concerns",          len(concern_hits))
+
+    if critical_hits:
+        st.error("**Critical language found — review these immediately:**")
+        st.dataframe(pd.DataFrame(critical_hits), use_container_width=True, hide_index=True)
+    if high_hits:
+        with st.expander(f"High Concern — {len(high_hits)} match(es)", expanded=True):
+            st.dataframe(pd.DataFrame(high_hits), use_container_width=True, hide_index=True)
+    if concern_hits:
+        with st.expander(f"General Concerns — {len(concern_hits)} match(es)", expanded=False):
+            st.dataframe(pd.DataFrame(concern_hits), use_container_width=True, hide_index=True)
+    if not critical_hits and not high_hits and not concern_hits:
+        st.success("No flagged keywords found in current assessment descriptions.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 4 — All Assessments
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📁 All Assessments":
     st.title("📁 All Risk Assessments")
@@ -304,7 +432,7 @@ elif page == "📁 All Assessments":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGE 4 — About
+# PAGE 5 — About
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "ℹ️ About":
     st.title("ℹ️ About This Tool")

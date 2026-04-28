@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
@@ -144,15 +145,14 @@ def department_risk_chart(df: pd.DataFrame) -> go.Figure:
 def risk_trend_chart(df: pd.DataFrame) -> go.Figure:
     if "date" not in df.columns or df["date"].isna().all():
         return go.Figure()
-    trend = (
-        df.groupby(pd.to_datetime(df["date"]).dt.to_period("M"))["risk_score"]
-        .mean()
-        .reset_index()
-    )
-    trend["date"] = trend["date"].astype(str)
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"]).dt.to_period("M")
+    trend = tmp.groupby("_month")["risk_score"].mean().reset_index()
+    trend["label"] = trend["_month"].astype(str)
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=trend["date"], y=trend["risk_score"],
+        x=trend["label"], y=trend["risk_score"],
         mode="lines+markers",
         line=dict(color="#3498db", width=2),
         marker=dict(size=8, color="#3498db"),
@@ -160,17 +160,34 @@ def risk_trend_chart(df: pd.DataFrame) -> go.Figure:
         fillcolor="rgba(52,152,219,0.15)",
         name="Avg Monthly Risk",
     ))
+
+    if len(trend) >= 2:
+        x_idx = np.arange(len(trend))
+        coeffs = np.polyfit(x_idx, trend["risk_score"].values, 1)
+        last_period = trend["_month"].iloc[-1]
+        f_labels = [(last_period + i).to_timestamp().strftime("%Y-%m") for i in range(1, 4)]
+        f_vals   = [max(1.0, float(np.polyval(coeffs, len(trend) - 1 + i))) for i in range(1, 4)]
+        fig.add_trace(go.Scatter(
+            x=[trend["label"].iloc[-1]] + f_labels,
+            y=[float(trend["risk_score"].iloc[-1])] + f_vals,
+            mode="lines+markers",
+            line=dict(color="#e67e22", width=2, dash="dot"),
+            marker=dict(size=7, color="#e67e22", symbol="diamond"),
+            name="3-Month Forecast",
+        ))
+
     fig.add_hline(y=12, line_dash="dash", line_color="#e74c3c",
                   annotation_text="High Risk Threshold", annotation_position="top left")
     fig.update_layout(
-        title="Average Risk Score Trend Over Time",
+        title="Average Risk Score — Historical & Forecast",
         xaxis_title="Month",
         yaxis_title="Avg Risk Score",
-        height=320,
+        height=340,
         margin=dict(l=40, r=20, t=40, b=40),
         paper_bgcolor="#0e1117",
         plot_bgcolor="#0e1117",
         font=dict(color="white"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     return fig
 
