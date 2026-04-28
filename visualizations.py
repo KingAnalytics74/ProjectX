@@ -6,11 +6,15 @@ from plotly.subplots import make_subplots
 
 
 RISK_COLOURS = {
-    "Low": "#2ecc71",
-    "Medium": "#f39c12",
+    "Low": "#27ae60",
+    "Medium": "#e67e22",
     "High": "#e74c3c",
     "Very High": "#8e44ad",
 }
+
+_PAPER = "#FFFFFF"
+_PLOT  = "#F0F2F6"
+_FONT  = "#262730"
 
 
 def risk_matrix_heatmap(df: pd.DataFrame) -> go.Figure:
@@ -51,7 +55,7 @@ def risk_matrix_heatmap(df: pd.DataFrame) -> go.Figure:
             fig.add_annotation(
                 x=c_idx + 1, y=r_idx + 1,
                 text=str(val), showarrow=False,
-                font=dict(color="white", size=11, family="Arial Black"),
+                font=dict(color="white", size=11, family="Arial Black",),
             )
 
     if not df.empty:
@@ -77,9 +81,9 @@ def risk_matrix_heatmap(df: pd.DataFrame) -> go.Figure:
         yaxis=dict(title="Likelihood", tickvals=list(range(1, 6)), range=[0.5, 5.5]),
         height=420,
         margin=dict(l=40, r=20, t=40, b=40),
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        font=dict(color="white"),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
     )
     return fig
 
@@ -101,9 +105,9 @@ def hazard_bar_chart(df: pd.DataFrame) -> go.Figure:
         xaxis_tickangle=-35,
         height=380,
         margin=dict(l=40, r=20, t=40, b=100),
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        font=dict(color="white"),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     return fig
@@ -134,9 +138,9 @@ def department_risk_chart(df: pd.DataFrame) -> go.Figure:
         xaxis=dict(title="Average Risk Score", range=[0, 27]),
         height=max(300, 60 * len(dept) + 80),
         margin=dict(l=40, r=40, t=40, b=40),
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        font=dict(color="white"),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
         showlegend=False,
     )
     return fig
@@ -184,9 +188,9 @@ def risk_trend_chart(df: pd.DataFrame) -> go.Figure:
         yaxis_title="Avg Risk Score",
         height=340,
         margin=dict(l=40, r=20, t=40, b=40),
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        font=dict(color="white"),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     return fig
@@ -212,9 +216,9 @@ def risk_reduction_chart(df: pd.DataFrame) -> go.Figure:
         yaxis_title="Risk Score",
         height=320,
         margin=dict(l=40, r=20, t=40, b=40),
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        font=dict(color="white"),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     return fig
