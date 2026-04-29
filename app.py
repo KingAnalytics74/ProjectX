@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from data_manager import (
     HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats,
 )
-from database import load_data, save_entry, delete_entry, update_status
+from database import load_data, save_entry, delete_entry, update_status, _use_supabase
 from visualizations import (
     risk_matrix_heatmap, hazard_bar_chart,
     department_risk_chart, risk_trend_chart, risk_reduction_chart,
@@ -44,6 +44,12 @@ with st.sidebar:
         _overdue = len(_active[_active["review_date"] < pd.Timestamp(date.today())])
         _oc = "red" if _overdue > 0 else "green"
         st.markdown(f"**Overdue Reviews:** :{_oc}[{_overdue}]")
+
+    st.divider()
+    if _use_supabase():
+        st.success("🟢 Connected to Supabase")
+    else:
+        st.warning("🟡 Using local data — Supabase not connected")
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
