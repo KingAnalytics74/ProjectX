@@ -222,3 +222,111 @@ def risk_reduction_chart(df: pd.DataFrame) -> go.Figure:
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     return fig
+
+
+def monthly_volume_chart(df: pd.DataFrame) -> go.Figure:
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"]).dt.to_period("M")
+    vol = tmp.groupby("_month").size().reset_index(name="count")
+    vol["label"] = vol["_month"].astype(str)
+    fig = go.Figure(go.Bar(
+        x=vol["label"], y=vol["count"],
+        marker_color="#004B87",
+        text=vol["count"], textposition="outside",
+    ))
+    fig.update_layout(
+        title="Monthly Assessment Volume",
+        xaxis_title="Month",
+        yaxis_title="Assessments Submitted",
+        height=320,
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
+        showlegend=False,
+    )
+    return fig
+
+
+def risk_level_stacked_chart(df: pd.DataFrame) -> go.Figure:
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"]).dt.to_period("M").astype(str)
+    counts = tmp.groupby(["_month", "risk_level"]).size().reset_index(name="count")
+    fig = go.Figure()
+    for level in ["Low", "Medium", "High", "Very High"]:
+        subset = counts[counts["risk_level"] == level]
+        fig.add_trace(go.Bar(
+            x=subset["_month"], y=subset["count"],
+            name=level,
+            marker_color=RISK_COLOURS[level],
+        ))
+    fig.update_layout(
+        barmode="stack",
+        title="Risk Level Distribution by Month",
+        xaxis_title="Month",
+        yaxis_title="Count",
+        height=320,
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    return fig
+
+
+def control_effectiveness_chart(df: pd.DataFrame) -> go.Figure:
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"]).dt.to_period("M")
+    tmp["reduction"] = tmp["risk_score"] - tmp["residual_risk_score"]
+    eff = tmp.groupby("_month")["reduction"].mean().reset_index()
+    eff["label"] = eff["_month"].astype(str)
+    fig = go.Figure(go.Scatter(
+        x=eff["label"], y=eff["reduction"],
+        mode="lines+markers",
+        line=dict(color="#27ae60", width=2),
+        marker=dict(size=8, color="#27ae60"),
+        fill="tozeroy",
+        fillcolor="rgba(39,174,96,0.12)",
+        name="Avg Risk Reduction",
+    ))
+    fig.update_layout(
+        title="Average Risk Reduction by Controls (per Month)",
+        xaxis_title="Month",
+        yaxis_title="Avg Score Reduction",
+        height=320,
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
+        showlegend=False,
+    )
+    return fig
+
+
+def department_trend_lines(df: pd.DataFrame) -> go.Figure:
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"]).dt.to_period("M").astype(str)
+    dept_trend = tmp.groupby(["_month", "department"])["risk_score"].mean().reset_index()
+    fig = go.Figure()
+    for dept in dept_trend["department"].unique():
+        subset = dept_trend[dept_trend["department"] == dept]
+        fig.add_trace(go.Scatter(
+            x=subset["_month"], y=subset["risk_score"],
+            mode="lines+markers",
+            name=dept,
+            line=dict(width=2),
+            marker=dict(size=6),
+        ))
+    fig.update_layout(
+        title="Department Risk Score Over Time",
+        xaxis_title="Month",
+        yaxis_title="Avg Risk Score",
+        height=380,
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor=_PAPER,
+        plot_bgcolor=_PLOT,
+        font=dict(color=_FONT),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10)),
+    )
+    return fig

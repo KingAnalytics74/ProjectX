@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 
-from data_manager import (
-    HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats,
-)
+from data_manager import HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats
 from database import load_data, save_entry, delete_entry, update_status, _use_supabase
 from visualizations import (
-    risk_matrix_heatmap, hazard_bar_chart,
-    department_risk_chart, risk_trend_chart, risk_reduction_chart,
+    risk_matrix_heatmap, hazard_bar_chart, department_risk_chart,
+    risk_trend_chart, risk_reduction_chart, monthly_volume_chart,
+    risk_level_stacked_chart, control_effectiveness_chart, department_trend_lines,
 )
 
 st.set_page_config(
@@ -18,14 +17,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Sidebar navigation ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🛡️ Safety Intelligence")
     st.markdown("*NEBOSH-aligned Risk Assessment Platform*")
     st.divider()
     page = st.radio(
         "Navigate",
-        ["📋 New Assessment", "📊 Dashboard", "🔔 Alerts & Insights", "📁 All Assessments", "ℹ️ About"],
+        ["📋 New Assessment", "📊 Dashboard", "📈 Trends",
+         "🔔 Alerts & Insights", "📁 All Assessments", "ℹ️ About"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -33,18 +32,13 @@ with st.sidebar:
     stats = get_summary_stats(df_all)
     st.markdown(f"**Total Assessments:** {stats['total']}")
     st.markdown(f"**Open Items:** {stats['open']}")
-
     high_count = stats["very_high"] + stats["high"]
-    colour = "red" if high_count > 0 else "green"
-    st.markdown(f"**High/Very High:** :{colour}[{high_count}]")
-
+    st.markdown(f"**High/Very High:** :{'red' if high_count > 0 else 'green'}[{high_count}]")
     if not df_all.empty:
         _active = df_all[df_all["status"] != "Closed"].copy()
         _active["review_date"] = pd.to_datetime(_active["review_date"])
         _overdue = len(_active[_active["review_date"] < pd.Timestamp(date.today())])
-        _oc = "red" if _overdue > 0 else "green"
-        st.markdown(f"**Overdue Reviews:** :{_oc}[{_overdue}]")
-
+        st.markdown(f"**Overdue Reviews:** :{'red' if _overdue > 0 else 'green'}[{_overdue}]")
     st.divider()
     if _use_supabase():
         st.success("🟢 Connected to Supabase")
@@ -52,15 +46,6 @@ with st.sidebar:
         st.warning("🟡 Using local data — Supabase not connected")
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────────
-def risk_badge(level: str) -> str:
-    colours = {"Low": "green", "Medium": "orange", "High": "red", "Very High": "violet"}
-    return f":{colours.get(level, 'gray')}[{level}]"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 1 — New Assessment Form
-# ══════════════════════════════════════════════════════════════════════════════
 if page == "📋 New Assessment":
     st.title("📋 New Risk Assessment")
     st.caption("Complete all fields using NEBOSH risk assessment principles.")
@@ -80,16 +65,13 @@ if page == "📋 New Assessment":
             placeholder="Describe the hazard and who might be harmed.",
             height=80,
         )
-        activity = st.text_input(
-            "Activity / Task", placeholder="e.g. Loading pallets using forklift"
-        )
+        activity = st.text_input("Activity / Task", placeholder="e.g. Loading pallets using forklift")
 
         st.subheader("3 · Initial Risk Rating")
         st.caption("Rate **before** controls are applied.")
         col6, col7 = st.columns(2)
         likelihood = col6.slider("Likelihood (1 = Rare  →  5 = Almost Certain)", 1, 5, 3)
         severity   = col7.slider("Severity  (1 = Negligible  →  5 = Catastrophic)", 1, 5, 3)
-
         risk_score = likelihood * severity
         risk_level, _ = classify_risk(risk_score)
         col6.metric("Risk Score", risk_score)
@@ -112,7 +94,6 @@ if page == "📋 New Assessment":
         col8, col9 = st.columns(2)
         res_likelihood = col8.slider("Residual Likelihood", 1, 5, max(1, likelihood - 1))
         res_severity   = col9.slider("Residual Severity",   1, 5, max(1, severity - 1))
-
         residual_score = res_likelihood * res_severity
         residual_level, _ = classify_risk(residual_score)
         col8.metric("Residual Score", residual_score)
@@ -120,9 +101,7 @@ if page == "📋 New Assessment":
 
         st.subheader("6 · Review & Status")
         col10, col11 = st.columns(2)
-        review_date = col10.date_input(
-            "Next Review Date", value=date.today() + timedelta(days=90)
-        )
+        review_date = col10.date_input("Next Review Date", value=date.today() + timedelta(days=90))
         status = col11.selectbox("Status", ["Open", "In Progress", "Closed"])
 
         submitted = st.form_submit_button("💾 Save Assessment", use_container_width=True)
@@ -131,76 +110,47 @@ if page == "📋 New Assessment":
         if not assessor or not location or not hazard_description or not existing_controls:
             st.error("Please complete all required fields (marked *).")
         else:
-            entry = {
-                "assessor": assessor,
-                "department": department,
-                "location": location,
-                "hazard_category": hazard_category,
-                "hazard_description": hazard_description,
-                "activity": activity,
-                "likelihood": likelihood,
-                "severity": severity,
-                "risk_score": risk_score,
-                "risk_level": risk_level,
-                "existing_controls": existing_controls,
-                "further_controls": further_controls,
-                "residual_likelihood": res_likelihood,
-                "residual_severity": res_severity,
-                "residual_risk_score": residual_score,
-                "residual_risk_level": residual_level,
-                "review_date": review_date.strftime("%Y-%m-%d"),
-                "status": status,
-            }
-            save_entry(entry)
+            save_entry({
+                "assessor": assessor, "department": department, "location": location,
+                "hazard_category": hazard_category, "hazard_description": hazard_description,
+                "activity": activity, "likelihood": likelihood, "severity": severity,
+                "risk_score": risk_score, "risk_level": risk_level,
+                "existing_controls": existing_controls, "further_controls": further_controls,
+                "residual_likelihood": res_likelihood, "residual_severity": res_severity,
+                "residual_risk_score": residual_score, "residual_risk_level": residual_level,
+                "review_date": review_date.strftime("%Y-%m-%d"), "status": status,
+            })
             st.success(f"Assessment saved! Risk Score: **{risk_score}** — Level: **{risk_level}**")
-
             if risk_score >= 17:
-                st.error(
-                    "🚨 **VERY HIGH RISK** — Immediate action required. "
-                    "Notify the safety manager and do not proceed with the activity."
-                )
+                st.error("🚨 **VERY HIGH RISK** — Immediate action required. Notify the safety manager and do not proceed with the activity.")
             elif risk_score >= 12:
-                st.warning(
-                    "⚠️ **HIGH RISK** — Further controls must be implemented before work continues."
-                )
+                st.warning("⚠️ **HIGH RISK** — Further controls must be implemented before work continues.")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 2 — Dashboard
-# ══════════════════════════════════════════════════════════════════════════════
 elif page == "📊 Dashboard":
     st.title("📊 Safety Intelligence Dashboard")
-
     df = load_data()
 
     if df.empty:
         st.info("No assessments recorded yet. Add your first assessment using the form.")
         st.stop()
 
-    # ── KPI row ──────────────────────────────────────────────────────────────
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Total Assessments", stats["total"])
-    k2.metric("Open Items",         stats["open"])
-    k3.metric("Very High Risk",     stats["very_high"],  delta=None)
-    k4.metric("High Risk",          stats["high"])
-    k5.metric("Avg Initial Score",  stats["avg_risk"])
+    k2.metric("Open Items",        stats["open"])
+    k3.metric("Very High Risk",    stats["very_high"])
+    k4.metric("High Risk",         stats["high"])
+    k5.metric("Avg Initial Score", stats["avg_risk"])
     k6.metric("Avg Residual Score", stats["avg_residual"],
               delta=f"-{round(stats['avg_risk'] - stats['avg_residual'], 1)}" if stats["avg_risk"] else None)
 
     st.divider()
 
-    # ── Filters ──────────────────────────────────────────────────────────────
     with st.expander("🔍 Filters", expanded=False):
         fc1, fc2, fc3 = st.columns(3)
-        dept_filter = fc1.multiselect(
-            "Department", df["department"].unique().tolist(), default=[]
-        )
-        cat_filter = fc2.multiselect(
-            "Hazard Category", df["hazard_category"].unique().tolist(), default=[]
-        )
-        lvl_filter = fc3.multiselect(
-            "Risk Level", ["Low", "Medium", "High", "Very High"], default=[]
-        )
+        dept_filter = fc1.multiselect("Department", df["department"].unique().tolist(), default=[])
+        cat_filter  = fc2.multiselect("Hazard Category", df["hazard_category"].unique().tolist(), default=[])
+        lvl_filter  = fc3.multiselect("Risk Level", ["Low", "Medium", "High", "Very High"], default=[])
 
     filtered = df.copy()
     if dept_filter:
@@ -214,61 +164,102 @@ elif page == "📊 Dashboard":
         st.warning("No records match the selected filters.")
         st.stop()
 
-    # ── Charts row 1 ─────────────────────────────────────────────────────────
-    col_l, col_r = st.columns([1, 1])
+    col_l, col_r = st.columns(2)
     with col_l:
         st.plotly_chart(risk_matrix_heatmap(filtered), use_container_width=True)
     with col_r:
         st.plotly_chart(hazard_bar_chart(filtered), use_container_width=True)
 
-    # ── Charts row 2 ─────────────────────────────────────────────────────────
-    col_l2, col_r2 = st.columns([1, 1])
+    col_l2, col_r2 = st.columns(2)
     with col_l2:
         st.plotly_chart(department_risk_chart(filtered), use_container_width=True)
     with col_r2:
         st.plotly_chart(risk_reduction_chart(filtered), use_container_width=True)
 
-    # ── Trend ────────────────────────────────────────────────────────────────
     if len(filtered) > 1:
         st.plotly_chart(risk_trend_chart(filtered), use_container_width=True)
 
-    # ── High-risk alert table ─────────────────────────────────────────────────
     high_risk = filtered[filtered["risk_score"] >= 12].sort_values("risk_score", ascending=False)
     if not high_risk.empty:
         st.subheader("🚨 High & Very High Risk Items")
-        display_cols = [
-            "id", "date", "department", "location",
-            "hazard_category", "risk_score", "risk_level", "status"
-        ]
         st.dataframe(
-            high_risk[display_cols].rename(columns={
-                "id": "ID", "date": "Date", "department": "Department",
-                "location": "Location", "hazard_category": "Hazard",
-                "risk_score": "Score", "risk_level": "Level", "status": "Status"
+            high_risk[["id", "date", "department", "location", "hazard_category", "risk_score", "risk_level", "status"]].rename(columns={
+                "id": "ID", "date": "Date", "department": "Department", "location": "Location",
+                "hazard_category": "Hazard", "risk_score": "Score", "risk_level": "Level", "status": "Status",
             }),
-            use_container_width=True,
-            hide_index=True,
+            use_container_width=True, hide_index=True,
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 3 — Alerts & Insights
-# ══════════════════════════════════════════════════════════════════════════════
+elif page == "📈 Trends":
+    st.title("📈 Trends & Forecasting")
+    st.caption("Longitudinal analysis of risk patterns, control effectiveness, and predictive forecasting.")
+    df = load_data()
+
+    if df.empty:
+        st.info("No assessments recorded yet. Add your first assessment using the form.")
+        st.stop()
+
+    df["date"] = pd.to_datetime(df["date"])
+
+    t1, t2, t3, t4 = st.columns(4)
+    months_active = df["date"].dt.to_period("M").nunique()
+    avg_reduction = round((df["risk_score"] - df["residual_risk_score"]).mean(), 1)
+    closure_rate  = round(len(df[df["status"] == "Closed"]) / len(df) * 100, 1)
+    worst_dept    = df.groupby("department")["risk_score"].mean().idxmax() if not df.empty else "—"
+    t1.metric("Months of Data",      months_active)
+    t2.metric("Avg Risk Reduction",  avg_reduction)
+    t3.metric("Closure Rate",        f"{closure_rate}%")
+    t4.metric("Highest Risk Dept",   worst_dept)
+
+    st.divider()
+
+    st.plotly_chart(risk_trend_chart(df), use_container_width=True)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.plotly_chart(monthly_volume_chart(df), use_container_width=True)
+    with col_b:
+        st.plotly_chart(risk_level_stacked_chart(df), use_container_width=True)
+
+    col_c, col_d = st.columns(2)
+    with col_c:
+        st.plotly_chart(control_effectiveness_chart(df), use_container_width=True)
+    with col_d:
+        st.plotly_chart(department_trend_lines(df), use_container_width=True)
+
+    st.divider()
+    st.subheader("📋 Period Summary")
+    summary = (
+        df.assign(month=df["date"].dt.to_period("M").astype(str))
+        .groupby("month")
+        .agg(
+            Assessments=("id", "count"),
+            Avg_Risk=("risk_score", "mean"),
+            Avg_Residual=("residual_risk_score", "mean"),
+            High_or_Very_High=("risk_level", lambda x: (x.isin(["High", "Very High"])).sum()),
+        )
+        .round(1)
+        .reset_index()
+        .rename(columns={"month": "Month", "Avg_Risk": "Avg Risk", "Avg_Residual": "Avg Residual"})
+        .sort_values("Month", ascending=False)
+    )
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+
+
 elif page == "🔔 Alerts & Insights":
     st.title("🔔 Alerts & Insights")
     st.caption("Data-driven safety intelligence — overdue reviews, risk velocity, and keyword analysis.")
-
     df = load_data()
+
     if df.empty:
         st.info("No assessments yet.")
         st.stop()
 
     today_ts = pd.Timestamp(date.today())
 
-    # ── Overdue Reviews ───────────────────────────────────────────────────────
     st.subheader("📅 Overdue Review Alerts")
-
-    active = df[df["status"] != "Closed"].copy()
+    active  = df[df["status"] != "Closed"].copy()
     active["review_date"] = pd.to_datetime(active["review_date"])
     overdue = active[active["review_date"] < today_ts].copy()
     overdue["days_overdue"] = (today_ts - overdue["review_date"]).dt.days
@@ -289,19 +280,13 @@ elif page == "🔔 Alerts & Insights":
         )
 
     st.divider()
-
-    # ── Risk Velocity ─────────────────────────────────────────────────────────
     st.subheader("📈 Department Risk Velocity")
     st.caption("Average risk score: last 60 days vs prior 60-day period. Green = improving, Red = worsening.")
 
     df["date"] = pd.to_datetime(df["date"])
-    recent_mask = df["date"] >= (today_ts - pd.Timedelta(days=60))
-    prior_mask  = (df["date"] >= (today_ts - pd.Timedelta(days=120))) & (df["date"] < (today_ts - pd.Timedelta(days=60)))
+    recent_avg = df[df["date"] >= (today_ts - pd.Timedelta(days=60))].groupby("department")["risk_score"].mean()
+    prior_avg  = df[(df["date"] >= (today_ts - pd.Timedelta(days=120))) & (df["date"] < (today_ts - pd.Timedelta(days=60)))].groupby("department")["risk_score"].mean()
 
-    recent_avg = df[recent_mask].groupby("department")["risk_score"].mean()
-    prior_avg  = df[prior_mask].groupby("department")["risk_score"].mean()
-
-    # Fall back to first-half / second-half split if date windows are too sparse
     if recent_avg.empty or prior_avg.empty:
         half = len(df) // 2
         if half > 0:
@@ -313,9 +298,8 @@ elif page == "🔔 Alerts & Insights":
     if all_depts:
         cols = st.columns(min(len(all_depts), 5))
         for i, dept in enumerate(all_depts):
-            r = recent_avg.get(dept)
-            p = prior_avg.get(dept)
-            col = cols[i % len(cols)]
+            r, p = recent_avg.get(dept), prior_avg.get(dept)
+            col  = cols[i % len(cols)]
             if r is not None and p is not None:
                 col.metric(dept[:14], f"{r:.1f}", delta=f"{r - p:+.1f}", delta_color="inverse")
             elif r is not None:
@@ -324,28 +308,22 @@ elif page == "🔔 Alerts & Insights":
                 col.metric(dept[:14], f"{p:.1f}", delta="No recent data", delta_color="off")
 
     st.divider()
-
-    # ── Keyword Intelligence ──────────────────────────────────────────────────
     st.subheader("🔍 Keyword Intelligence")
     st.caption("Scanning hazard descriptions for language that indicates elevated concern.")
 
-    CRITICAL_KW  = ["collapse", "explosion", "fatality", "electrocution",
-                    "asphyxiation", "engulfment", "entrapment", "drowning"]
-    HIGH_KW      = ["toxic", "corrosive", "flammable", "fracture", "amputation",
-                    "burn", "entanglement", "crush", "fall from height", "serious injury"]
-    CONCERN_KW   = ["pain", "stress", "near miss", "strain", "fatigue",
-                    "anxiety", "overload", "pressure", "discomfort", "repetitive"]
+    CRITICAL_KW = ["collapse", "explosion", "fatality", "electrocution", "asphyxiation", "engulfment", "entrapment", "drowning"]
+    HIGH_KW     = ["toxic", "corrosive", "flammable", "fracture", "amputation", "burn", "entanglement", "crush", "fall from height", "serious injury"]
+    CONCERN_KW  = ["pain", "stress", "near miss", "strain", "fatigue", "anxiety", "overload", "pressure", "discomfort", "repetitive"]
 
     def scan(keywords: list) -> list:
         hits = []
         for _, row in df.iterrows():
-            text = f"{row.get('hazard_description', '')} {row.get('existing_controls', '')}".lower()
+            text  = f"{row.get('hazard_description', '')} {row.get('existing_controls', '')}".lower()
             found = [kw for kw in keywords if kw in text]
             if found:
                 hits.append({
                     "ID": int(row["id"]), "Department": row["department"],
-                    "Hazard": row["hazard_category"],
-                    "Keywords Found": ", ".join(found),
+                    "Hazard": row["hazard_category"], "Keywords Found": ", ".join(found),
                     "Risk Level": row["risk_level"], "Status": row["status"],
                 })
         return hits
@@ -355,9 +333,9 @@ elif page == "🔔 Alerts & Insights":
     concern_hits  = scan(CONCERN_KW)
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Critical Terms Detected",   len(critical_hits))
-    m2.metric("High Concern Terms",        len(high_hits))
-    m3.metric("General Concerns",          len(concern_hits))
+    m1.metric("Critical Terms Detected", len(critical_hits))
+    m2.metric("High Concern Terms",      len(high_hits))
+    m3.metric("General Concerns",        len(concern_hits))
 
     if critical_hits:
         st.error("**Critical language found — review these immediately:**")
@@ -372,41 +350,31 @@ elif page == "🔔 Alerts & Insights":
         st.success("No flagged keywords found in current assessment descriptions.")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 4 — All Assessments
-# ══════════════════════════════════════════════════════════════════════════════
 elif page == "📁 All Assessments":
     st.title("📁 All Risk Assessments")
-
     df = load_data()
 
     if df.empty:
         st.info("No assessments yet.")
         st.stop()
 
-    # Export
-    csv_data = df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "⬇️ Export to CSV", data=csv_data,
+        "⬇️ Export to CSV", data=df.to_csv(index=False).encode("utf-8"),
         file_name="risk_assessments.csv", mime="text/csv",
     )
-
     st.divider()
 
-    # Search
-    search = st.text_input("🔍 Search (hazard, department, location…)", "")
+    search  = st.text_input("🔍 Search (hazard, department, location…)", "")
     view_df = df.copy()
     if search:
-        mask = view_df.apply(
-            lambda r: r.astype(str).str.contains(search, case=False).any(), axis=1
-        )
+        mask    = view_df.apply(lambda r: r.astype(str).str.contains(search, case=False).any(), axis=1)
         view_df = view_df[mask]
 
     for _, row in view_df.iterrows():
-        rl, _ = classify_risk(int(row["risk_score"]))
-        colour = {"Low": "🟢", "Medium": "🟡", "High": "🔴", "Very High": "🟣"}.get(rl, "⚪")
+        rl, _  = classify_risk(int(row["risk_score"]))
+        icon   = {"Low": "🟢", "Medium": "🟡", "High": "🔴", "Very High": "🟣"}.get(rl, "⚪")
         with st.expander(
-            f"{colour} ID {int(row['id'])} | {row['hazard_category']} — "
+            f"{icon} ID {int(row['id'])} | {row['hazard_category']} — "
             f"{row['department']} | Score: {int(row['risk_score'])} ({row['risk_level']}) | {row['status']}"
         ):
             c1, c2 = st.columns(2)
@@ -418,7 +386,6 @@ elif page == "📁 All Assessments":
             c2.markdown(f"**Risk Score:** {int(row['risk_score'])}  ({row['risk_level']})")
             c2.markdown(f"**Residual Score:** {int(row['residual_risk_score'])}  ({row['residual_risk_level']})")
             c2.markdown(f"**Review Date:** {row['review_date']}")
-
             st.markdown(f"**Existing Controls:** {row['existing_controls']}")
             if pd.notna(row.get("further_controls")) and row["further_controls"]:
                 st.markdown(f"**Further Controls:** {row['further_controls']}")
@@ -437,9 +404,6 @@ elif page == "📁 All Assessments":
                 st.rerun()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 5 — About
-# ══════════════════════════════════════════════════════════════════════════════
 elif page == "ℹ️ About":
     st.title("ℹ️ About This Tool")
     st.markdown("""
@@ -480,5 +444,5 @@ Risk Score = Likelihood × Severity
 | 5 | Catastrophic — fatality / multiple serious injuries |
 
 ---
-*Built with Python · Streamlit · Plotly · Pandas*
+*Built with Python · Streamlit · Plotly · Pandas · Supabase*
     """)
