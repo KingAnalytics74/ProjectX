@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import date, timedelta
 
 from data_manager import HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats
@@ -8,6 +9,7 @@ from visualizations import (
     risk_matrix_heatmap, hazard_bar_chart, department_risk_chart,
     risk_trend_chart, risk_reduction_chart, monthly_volume_chart,
     risk_level_stacked_chart, control_effectiveness_chart, department_trend_lines,
+    spc_imr_chart, spc_mr_chart,
 )
 
 st.set_page_config(
@@ -192,8 +194,8 @@ elif page == "📊 Dashboard":
 
 
 elif page == "📈 Trends":
-    st.title("📈 Trends & Forecasting")
-    st.caption("Longitudinal analysis of risk patterns, control effectiveness, and predictive forecasting.")
+    st.title("📈 Statistical Process Control")
+    st.caption("Monitoring workplace safety as a managed process using SPC control charts and Nelson Rule signal detection.")
     df = load_data()
 
     if df.empty:
@@ -202,31 +204,116 @@ elif page == "📈 Trends":
 
     df["date"] = pd.to_datetime(df["date"])
 
-    t1, t2, t3, t4 = st.columns(4)
-    months_active = df["date"].dt.to_period("M").nunique()
-    avg_reduction = round((df["risk_score"] - df["residual_risk_score"]).mean(), 1)
-    closure_rate  = round(len(df[df["status"] == "Closed"]) / len(df) * 100, 1)
-    worst_dept    = df.groupby("department")["risk_score"].mean().idxmax() if not df.empty else "—"
-    t1.metric("Months of Data",      months_active)
-    t2.metric("Avg Risk Reduction",  avg_reduction)
-    t3.metric("Closure Rate",        f"{closure_rate}%")
-    t4.metric("Highest Risk Dept",   worst_dept)
+    tmp     = df.copy()
+    tmp["_month"] = tmp["date"].dt.to_period("M")
+    monthly = tmp.groupby("_month")["risk_score"].mean().reset_index()
+    monthly["label"] = monthly["_month"].astype(str)
+    labels  = monthly["label"].tolist()
+    values  = monthly["risk_score"].tolist()
+
+    x_bar   = float(np.mean(values))
+    mr      = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
+    mr_bar  = float(np.mean(mr)) if mr else 0.001
+    sigma   = mr_bar / 1.128
+    ucl     = x_bar + 3 * sigma
+    lcl     = max(1.0, x_bar - 3 * sigma)
+    u2s     = x_bar + 2 * sigma
+    l2s     = x_bar - 2 * sigma
+    ucl_mr  = 3.267 * mr_bar
+    USL     = 12.0
+    Cpu     = (USL - x_bar) / (3 * sigma) if sigma > 0 else float("inf")
+
+    def detect_signals(vals):
+        signals = {}
+        n = len(vals)
+        for i in range(n):
+            v, rules = vals[i], []
+            if v > ucl or v < lcl:
+                rules.append("Rule 1 — Point beyond ±3σ control limit")
+            if i >= 7:
+                w = vals[i - 7: i + 1]
+                if all(p > x_bar for p in w) or all(p < x_bar for p in w):
+                    rules.append("Rule 2 — 8 consecutive points on one side of centreline")
+            if i >= 5:
+                w = vals[i - 5: i + 1]
+                d = [w[j + 1] - w[j] for j in range(len(w) - 1)]
+                if all(x > 0 for x in d) or all(x < 0 for x in d):
+                    rules.append("Rule 3 — 6 consecutive points trending monotonically")
+            if i >= 2:
+                w = vals[i - 2: i + 1]
+                if sum(1 for p in w if p > u2s) >= 2 or sum(1 for p in w if p < l2s) >= 2:
+                    rules.append("Rule 4 — 2 of 3 consecutive points beyond ±2σ")
+            if rules:
+                signals[i] = rules
+        return signals
+
+    signal_map  = detect_signals(values)
+    signal_idx  = set(signal_map.keys())
+    in_control  = len(signal_map) == 0
+
+    if Cpu == float("inf"):
+        capability_label = "Capable"
+    elif Cpu >= 1.33:
+        capability_label = "Capable"
+    elif Cpu >= 1.0:
+        capability_label = "Marginal"
+    else:
+        capability_label = "Not Capable"
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Process Status",    "In Control" if in_control else "Out of Control")
+    k2.metric("Process Mean (X̄)", f"{x_bar:.2f}")
+    k3.metric("Process σ",         f"{sigma:.2f}")
+    k4.metric("Cpu  (USL = 12)",   f"{Cpu:.2f}" if Cpu != float("inf") else "∞")
+    k5.metric("Signals Detected",  len(signal_map))
+
+    if in_control:
+        st.success("**Process is in statistical control.** No Nelson Rule violations detected.")
+    else:
+        st.error(f"**{len(signal_map)} Nelson Rule violation(s) detected.** Review the signal table below.")
 
     st.divider()
+    st.subheader("I Chart — Individual Values")
+    st.plotly_chart(spc_imr_chart(labels, values, signal_idx), use_container_width=True)
 
-    st.plotly_chart(risk_trend_chart(df), use_container_width=True)
+    if len(values) >= 2:
+        st.subheader("MR Chart — Moving Range")
+        st.plotly_chart(spc_mr_chart(labels, mr, ucl_mr, mr_bar), use_container_width=True)
 
+    if signal_map:
+        st.divider()
+        st.subheader("🚨 Nelson Rule Violations")
+        rows = [
+            {"Month": labels[i], "Avg Risk Score": round(values[i], 2), "Violation": rule}
+            for i, rules in signal_map.items()
+            for rule in rules
+        ]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("⚙️ Process Capability")
+    st.caption("USL = 12 (NEBOSH High Risk threshold). Cpu measures how far the process mean sits below this limit.")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("X̄ (Process Mean)", f"{x_bar:.2f}")
+    c2.metric("σ (Process Sigma)", f"{sigma:.2f}")
+    c3.metric("Cpu",               f"{Cpu:.2f}" if Cpu != float("inf") else "∞")
+    c4.metric("Capability",         capability_label)
+
+    if Cpu >= 1.33:
+        st.success(f"**Cpu = {Cpu:.2f}** — Process is capable. Risk scores are consistently below the High Risk threshold of 12.")
+    elif Cpu >= 1.0:
+        st.warning(f"**Cpu = {Cpu:.2f}** — Process is marginally capable. Risk scores are approaching the High Risk threshold.")
+    else:
+        st.error(f"**Cpu = {Cpu:.2f}** — Process is not capable. Risk scores regularly breach the High Risk threshold. Systematic intervention required.")
+
+    st.divider()
     col_a, col_b = st.columns(2)
     with col_a:
         st.plotly_chart(monthly_volume_chart(df), use_container_width=True)
     with col_b:
         st.plotly_chart(risk_level_stacked_chart(df), use_container_width=True)
 
-    col_c, col_d = st.columns(2)
-    with col_c:
-        st.plotly_chart(control_effectiveness_chart(df), use_container_width=True)
-    with col_d:
-        st.plotly_chart(department_trend_lines(df), use_container_width=True)
+    st.plotly_chart(department_trend_lines(df), use_container_width=True)
 
     st.divider()
     st.subheader("📋 Period Summary")

@@ -313,20 +313,89 @@ def department_trend_lines(df: pd.DataFrame) -> go.Figure:
         subset = dept_trend[dept_trend["department"] == dept]
         fig.add_trace(go.Scatter(
             x=subset["_month"], y=subset["risk_score"],
-            mode="lines+markers",
-            name=dept,
-            line=dict(width=2),
-            marker=dict(size=6),
+            mode="lines+markers", name=dept,
+            line=dict(width=2), marker=dict(size=6),
         ))
     fig.update_layout(
         title="Department Risk Score Over Time",
-        xaxis_title="Month",
-        yaxis_title="Avg Risk Score",
+        xaxis_title="Month", yaxis_title="Avg Risk Score",
         height=380,
         margin=dict(l=40, r=20, t=40, b=40),
-        paper_bgcolor=_PAPER,
-        plot_bgcolor=_PLOT,
-        font=dict(color=_FONT),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10)),
+    )
+    return fig
+
+
+def spc_imr_chart(labels: list, values: list, signal_indices: set) -> go.Figure:
+    if len(values) < 2:
+        return go.Figure()
+    x_bar  = float(np.mean(values))
+    mr_bar = float(np.mean(np.abs(np.diff(values))))
+    sigma  = mr_bar / 1.128
+    ucl    = x_bar + 3 * sigma
+    lcl    = max(1.0, x_bar - 3 * sigma)
+    u2s    = x_bar + 2 * sigma
+    l2s    = x_bar - 2 * sigma
+    u1s    = x_bar + sigma
+    l1s    = x_bar - sigma
+
+    point_colours = ["#e74c3c" if i in signal_indices else "#004B87" for i in range(len(values))]
+
+    fig = go.Figure()
+    fig.add_hrect(y0=u2s, y1=ucl,  fillcolor="rgba(231,76,60,0.07)",  line_width=0)
+    fig.add_hrect(y0=lcl, y1=l2s,  fillcolor="rgba(231,76,60,0.07)",  line_width=0)
+    fig.add_hrect(y0=u1s, y1=u2s,  fillcolor="rgba(230,126,34,0.06)", line_width=0)
+    fig.add_hrect(y0=l2s, y1=l1s,  fillcolor="rgba(230,126,34,0.06)", line_width=0)
+    fig.add_hline(y=ucl,   line_dash="dash",  line_color="#e74c3c", line_width=1.5,
+                  annotation_text=f"UCL = {ucl:.2f}", annotation_position="top right")
+    fig.add_hline(y=x_bar, line_dash="solid", line_color="#27ae60", line_width=2,
+                  annotation_text=f"CL = {x_bar:.2f}",  annotation_position="top right")
+    if lcl > 1.0:
+        fig.add_hline(y=lcl, line_dash="dash", line_color="#e74c3c", line_width=1.5,
+                      annotation_text=f"LCL = {lcl:.2f}", annotation_position="bottom right")
+    for y, label in [(u2s, "+2σ"), (l2s, "−2σ"), (u1s, "+1σ"), (l1s, "−1σ")]:
+        colour = "#e67e22" if "2σ" in label else "#95a5a6"
+        fig.add_hline(y=y, line_dash="dot", line_color=colour, line_width=1,
+                      annotation_text=label, annotation_position="right")
+    fig.add_trace(go.Scatter(
+        x=labels, y=values,
+        mode="lines+markers",
+        line=dict(color="#004B87", width=2),
+        marker=dict(size=11, color=point_colours, line=dict(color="white", width=1.5)),
+        hovertemplate="<b>%{x}</b><br>Avg Risk: %{y:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title="I Chart — Monthly Average Risk Score",
+        xaxis_title="Month", yaxis_title="Avg Risk Score",
+        yaxis=dict(range=[max(0, lcl - sigma), ucl + sigma]),
+        height=420,
+        margin=dict(l=40, r=110, t=50, b=40),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
+        showlegend=False,
+    )
+    return fig
+
+
+def spc_mr_chart(labels: list, mr_values: list, ucl_mr: float, cl_mr: float) -> go.Figure:
+    signal_idx  = {i for i, v in enumerate(mr_values) if v > ucl_mr}
+    bar_colours = ["#e74c3c" if i in signal_idx else "#8e44ad" for i in range(len(mr_values))]
+    fig = go.Figure()
+    fig.add_hline(y=ucl_mr, line_dash="dash",  line_color="#e74c3c", line_width=1.5,
+                  annotation_text=f"UCL = {ucl_mr:.2f}", annotation_position="top right")
+    fig.add_hline(y=cl_mr,  line_dash="solid", line_color="#27ae60", line_width=2,
+                  annotation_text=f"R̄ = {cl_mr:.2f}",   annotation_position="top right")
+    fig.add_trace(go.Bar(
+        x=labels[1:], y=mr_values,
+        marker_color=bar_colours,
+        hovertemplate="<b>%{x}</b><br>MR: %{y:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title="MR Chart — Moving Range (Process Variability)",
+        xaxis_title="Month", yaxis_title="Moving Range",
+        height=300,
+        margin=dict(l=40, r=110, t=50, b=40),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
+        showlegend=False,
     )
     return fig
