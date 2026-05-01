@@ -35,7 +35,7 @@ RISK_LEVEL_MAP = {
 }
 
 
-def classify_risk(score: int) -> tuple[str, str]:
+def classify_risk(score: int) -> "tuple[str, str]":
     for (low, high), (label, colour) in RISK_LEVEL_MAP.items():
         if low <= score <= high:
             return label, colour
