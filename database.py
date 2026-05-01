@@ -56,6 +56,7 @@ def _use_supabase() -> bool:
     try:
         st.secrets["supabase"]["url"]
         st.secrets["supabase"]["key"]
+        from supabase import create_client  # noqa: F401
         return True
     except Exception:
         return False
