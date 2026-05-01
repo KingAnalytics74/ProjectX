@@ -1,50 +1,19 @@
 """
-Supabase persistence layer with automatic CSV fallback.
+Supabase persistence via direct REST API — no supabase package required.
+Uses only the `requests` library (already a Streamlit dependency).
 
-If Supabase secrets are not configured the app falls back to seed_data.csv
-so it remains functional at all times.
-
-─── SETUP ───────────────────────────────────────────────────────────────────
-
-Step 1 — Run this SQL in Supabase → SQL Editor:
-
-    create table if not exists risk_assessments (
-        id                  bigserial primary key,
-        date                date,
-        assessor            text,
-        department          text,
-        location            text,
-        hazard_category     text,
-        hazard_description  text,
-        activity            text,
-        likelihood          int,
-        severity            int,
-        risk_score          int,
-        risk_level          text,
-        existing_controls   text,
-        further_controls    text,
-        residual_likelihood  int,
-        residual_severity    int,
-        residual_risk_score  int,
-        residual_risk_level  text,
-        review_date         date,
-        status              text
-    );
-
-Step 2 — In Streamlit Cloud → your app → Settings → Secrets, add:
+Secrets required in Streamlit Cloud → Settings → Secrets:
 
     [supabase]
     url = "https://gwvnzokdkwgeztsyatza.supabase.co"
-    key = "<your anon/public key>"
+    key = "<anon public key>"
 
-    Get the anon key from:
-    Supabase Dashboard → Project Settings → API → Project API keys → anon public
-
-─────────────────────────────────────────────────────────────────────────────
+Falls back to seed_data.csv if secrets are absent.
 """
 
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import datetime
 
 import data_manager as _csv
@@ -56,28 +25,35 @@ def _use_supabase() -> bool:
     try:
         st.secrets["supabase"]["url"]
         st.secrets["supabase"]["key"]
-        from supabase import create_client  # noqa: F401
         return True
     except Exception:
         return False
 
 
-@st.cache_resource
-def _client():
-    from supabase import create_client
-    return create_client(
-        st.secrets["supabase"]["url"],
-        st.secrets["supabase"]["key"],
-    )
+def _url() -> str:
+    return f"{st.secrets['supabase']['url']}/rest/v1/{TABLE}"
+
+
+def _headers(prefer: str = "") -> dict:
+    h = {
+        "apikey": st.secrets["supabase"]["key"],
+        "Authorization": f"Bearer {st.secrets['supabase']['key']}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        h["Prefer"] = prefer
+    return h
 
 
 def load_data() -> pd.DataFrame:
     if not _use_supabase():
         return _csv.load_data()
-    resp = _client().table(TABLE).select("*").order("id").execute()
-    if not resp.data:
+    resp = requests.get(_url(), headers=_headers(), params={"select": "*", "order": "id"})
+    resp.raise_for_status()
+    data = resp.json()
+    if not data:
         return pd.DataFrame(columns=_csv.COLUMNS)
-    df = pd.DataFrame(resp.data)
+    df = pd.DataFrame(data)
     df["date"] = pd.to_datetime(df["date"])
     df["review_date"] = pd.to_datetime(df["review_date"])
     return df
@@ -93,19 +69,26 @@ def save_entry(entry: dict) -> pd.DataFrame:
     entry["risk_level"] = level
     res_level, _ = _csv.classify_risk(entry["residual_risk_score"])
     entry["residual_risk_level"] = res_level
-    _client().table(TABLE).insert(entry).execute()
+    resp = requests.post(_url(), headers=_headers("return=representation"), json=entry)
+    resp.raise_for_status()
     return load_data()
 
 
 def delete_entry(entry_id: int) -> pd.DataFrame:
     if not _use_supabase():
         return _csv.delete_entry(entry_id)
-    _client().table(TABLE).delete().eq("id", entry_id).execute()
+    resp = requests.delete(f"{_url()}?id=eq.{entry_id}", headers=_headers())
+    resp.raise_for_status()
     return load_data()
 
 
 def update_status(entry_id: int, new_status: str) -> pd.DataFrame:
     if not _use_supabase():
         return _csv.update_status(entry_id, new_status)
-    _client().table(TABLE).update({"status": new_status}).eq("id", entry_id).execute()
+    resp = requests.patch(
+        f"{_url()}?id=eq.{entry_id}",
+        headers=_headers("return=representation"),
+        json={"status": new_status},
+    )
+    resp.raise_for_status()
     return load_data()
