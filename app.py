@@ -9,7 +9,7 @@ from visualizations import (
     risk_matrix_heatmap, hazard_bar_chart, department_risk_chart,
     risk_trend_chart, risk_reduction_chart, monthly_volume_chart,
     risk_level_stacked_chart, control_effectiveness_chart, department_trend_lines,
-    spc_imr_chart, spc_mr_chart,
+    spc_imr_chart, spc_mr_chart, insights_risk_heatmap,
 )
 
 st.set_page_config(
@@ -26,7 +26,7 @@ with st.sidebar:
     page = st.radio(
         "Navigate",
         ["📋 New Assessment", "📊 Dashboard", "📈 Trends",
-         "🔔 Alerts & Insights", "📁 All Assessments", "ℹ️ About"],
+         "💡 Insights", "🔔 Alerts & Insights", "📁 All Assessments", "ℹ️ About"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -332,6 +332,98 @@ elif page == "📈 Trends":
         .sort_values("Month", ascending=False)
     )
     st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("🔬 Data Quality Report")
+    st.caption("Automated check for duplicate records and missing required fields.")
+
+    dups = df[df.duplicated(subset=["assessor", "department", "hazard_category", "date"], keep=False)]
+    missing_dept = df[df["department"].isna() | (df["department"].astype(str).str.strip() == "")]
+    missing_assessor = df[df["assessor"].isna() | (df["assessor"].astype(str).str.strip() == "")]
+
+    dq1, dq2, dq3 = st.columns(3)
+    dq1.metric("Potential Duplicates", len(dups))
+    dq2.metric("Missing Department", len(missing_dept))
+    dq3.metric("Missing Assessor", len(missing_assessor))
+
+    if dups.empty and missing_dept.empty and missing_assessor.empty:
+        st.success("Database is clean — no data quality issues detected.")
+    else:
+        if not dups.empty:
+            with st.expander(f"⚠️ {len(dups)} Potential Duplicate Records", expanded=True):
+                st.dataframe(
+                    dups[["id", "date", "assessor", "department", "hazard_category", "risk_score"]].rename(
+                        columns={"id": "ID", "date": "Date", "assessor": "Assessor",
+                                 "department": "Department", "hazard_category": "Hazard", "risk_score": "Score"}
+                    ), use_container_width=True, hide_index=True,
+                )
+        if not missing_dept.empty:
+            with st.expander(f"⚠️ {len(missing_dept)} Records Missing Department"):
+                st.dataframe(
+                    missing_dept[["id", "date", "assessor", "hazard_category"]].rename(
+                        columns={"id": "ID", "date": "Date", "assessor": "Assessor", "hazard_category": "Hazard"}
+                    ), use_container_width=True, hide_index=True,
+                )
+        if not missing_assessor.empty:
+            with st.expander(f"⚠️ {len(missing_assessor)} Records Missing Assessor"):
+                st.dataframe(
+                    missing_assessor[["id", "date", "department", "hazard_category"]].rename(
+                        columns={"id": "ID", "date": "Date", "department": "Department", "hazard_category": "Hazard"}
+                    ), use_container_width=True, hide_index=True,
+                )
+
+
+elif page == "💡 Insights":
+    st.title("💡 Risk Insights")
+    st.caption("Live analysis of your Supabase data — risk distribution, red zones, and top hazards.")
+    df = load_data()
+
+    if df.empty:
+        st.info("No assessments recorded yet. Add your first assessment to see insights.")
+        st.stop()
+
+    i1, i2, i3, i4 = st.columns(4)
+    i1.metric("Total Records", len(df))
+    i2.metric("Unique Departments", df["department"].nunique())
+    i3.metric("Unique Hazard Types", df["hazard_category"].nunique())
+    high_pct = round(100 * len(df[df["risk_score"] >= 12]) / len(df), 1)
+    i4.metric("In Red Zone (≥12)", f"{high_pct}%")
+
+    st.divider()
+    st.subheader("Risk Matrix — Red Zone Analysis")
+    st.caption("Likelihood on X-axis · Severity on Y-axis · Each dot = one assessment · Red zone = score ≥ 12")
+    st.plotly_chart(insights_risk_heatmap(df), use_container_width=True)
+
+    st.divider()
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("🔴 Top 10 Highest Risk Assessments")
+        top10 = (
+            df.sort_values("risk_score", ascending=False)
+            .head(10)[["id", "department", "hazard_category", "risk_score", "risk_level", "status"]]
+            .rename(columns={"id": "ID", "department": "Dept", "hazard_category": "Hazard",
+                             "risk_score": "Score", "risk_level": "Level", "status": "Status"})
+        )
+        st.dataframe(top10, use_container_width=True, hide_index=True)
+
+    with col_b:
+        st.subheader("📊 Risk Zone Breakdown")
+        zone_counts = df["risk_level"].value_counts().reindex(
+            ["Very High", "High", "Medium", "Low"], fill_value=0
+        ).reset_index()
+        zone_counts.columns = ["Risk Level", "Count"]
+        zone_counts["Percentage"] = (zone_counts["Count"] / len(df) * 100).round(1).astype(str) + "%"
+        st.dataframe(zone_counts, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("🏭 Department Red Zone Count")
+    red_zone = df[df["risk_score"] >= 12].groupby("department").size().reset_index(name="High Risk Count")
+    red_zone = red_zone.sort_values("High Risk Count", ascending=False)
+    if red_zone.empty:
+        st.success("No departments currently have High or Very High risk assessments.")
+    else:
+        st.dataframe(red_zone, use_container_width=True, hide_index=True)
 
 
 elif page == "🔔 Alerts & Insights":
