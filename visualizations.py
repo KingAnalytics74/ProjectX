@@ -377,6 +377,66 @@ def spc_imr_chart(labels: list, values: list, signal_indices: set) -> go.Figure:
     return fig
 
 
+def insights_risk_heatmap(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    for lik in range(1, 6):
+        for sev in range(1, 6):
+            score = lik * sev
+            if score <= 6:
+                colour = "#2ecc71"
+            elif score <= 11:
+                colour = "#f39c12"
+            elif score <= 16:
+                colour = "#e74c3c"
+            else:
+                colour = "#8e44ad"
+            fig.add_shape(
+                type="rect",
+                x0=lik - 0.5, x1=lik + 0.5,
+                y0=sev - 0.5, y1=sev + 0.5,
+                fillcolor=colour, line=dict(color="white", width=1),
+                opacity=0.55,
+            )
+            fig.add_annotation(
+                x=lik, y=sev, text=str(score), showarrow=False,
+                font=dict(color="white", size=12, family="Arial Black"),
+            )
+    if not df.empty:
+        for _, row in df.iterrows():
+            jx = row["likelihood"] + (hash(str(row["id"])) % 10) * 0.04 - 0.18
+            jy = row["severity"] + (hash(str(row["id"]) + "y") % 10) * 0.04 - 0.18
+            fig.add_trace(go.Scatter(
+                x=[jx], y=[jy], mode="markers",
+                marker=dict(size=11, color=RISK_COLOURS.get(row["risk_level"], "#555"),
+                            line=dict(color="white", width=1.5)),
+                text=(f"ID {int(row['id'])}: {row['hazard_category']}<br>"
+                      f"Dept: {row['department']}<br>"
+                      f"Score: {int(row['risk_score'])} ({row['risk_level']})"),
+                hovertemplate="%{text}<extra></extra>",
+                showlegend=False,
+            ))
+    fig.update_layout(
+        title="Risk Matrix — Live Data (Likelihood × Severity)",
+        xaxis=dict(
+            title="Likelihood →",
+            tickvals=list(range(1, 6)),
+            ticktext=["1 Rare", "2 Unlikely", "3 Possible", "4 Likely", "5 Almost Certain"],
+            range=[0.5, 5.5],
+        ),
+        yaxis=dict(
+            title="Severity →",
+            tickvals=list(range(1, 6)),
+            ticktext=["1 Negligible", "2 Minor", "3 Moderate", "4 Major", "5 Catastrophic"],
+            range=[0.5, 5.5],
+        ),
+        height=500,
+        margin=dict(l=130, r=20, t=50, b=110),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
+        showlegend=False,
+    )
+    return fig
+
+
 def spc_mr_chart(labels: list, mr_values: list, ucl_mr: float, cl_mr: float) -> go.Figure:
     signal_idx  = {i for i, v in enumerate(mr_values) if v > ucl_mr}
     bar_colours = ["#e74c3c" if i in signal_idx else "#8e44ad" for i in range(len(mr_values))]
