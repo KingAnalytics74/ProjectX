@@ -26,7 +26,8 @@ with st.sidebar:
     page = st.radio(
         "Navigate",
         ["📋 New Assessment", "📊 Dashboard", "📈 Trends",
-         "💡 Insights", "🔔 Alerts & Insights", "📁 All Assessments", "ℹ️ About"],
+         "💡 Insights", "🤖 AI Assistant", "🔔 Alerts & Insights",
+         "📁 All Assessments", "ℹ️ About"],
         label_visibility="collapsed",
     )
     st.divider()
@@ -262,7 +263,7 @@ elif page == "📈 Trends":
 
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Process Status",    "In Control" if in_control else "Out of Control")
-    k2.metric("Process Mean (X̄)", f"{x_bar:.2f}")
+    k2.metric("Process Mean (X̅)", f"{x_bar:.2f}")
     k3.metric("Process σ",         f"{sigma:.2f}")
     k4.metric("Cpu  (USL = 12)",   f"{Cpu:.2f}" if Cpu != float("inf") else "∞")
     k5.metric("Signals Detected",  len(signal_map))
@@ -294,7 +295,7 @@ elif page == "📈 Trends":
     st.subheader("⚙️ Process Capability")
     st.caption("USL = 12 (NEBOSH High Risk threshold). Cpu measures how far the process mean sits below this limit.")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("X̄ (Process Mean)", f"{x_bar:.2f}")
+    c1.metric("X̅ (Process Mean)", f"{x_bar:.2f}")
     c2.metric("σ (Process Sigma)", f"{sigma:.2f}")
     c3.metric("Cpu",               f"{Cpu:.2f}" if Cpu != float("inf") else "∞")
     c4.metric("Capability",         capability_label)
@@ -424,6 +425,119 @@ elif page == "💡 Insights":
         st.success("No departments currently have High or Very High risk assessments.")
     else:
         st.dataframe(red_zone, use_container_width=True, hide_index=True)
+
+
+elif page == "🤖 AI Assistant":
+    from ai_advisor import ai_available, stream_summary, stream_controls, stream_chat, data_context
+
+    st.title("🤖 AI Safety Advisor")
+    st.caption("Powered by Claude AI — intelligent analysis, control suggestions, and a chat interface for your H&S data.")
+
+    if not ai_available():
+        st.warning(
+            "**AI features require an Anthropic API key.**\n\n"
+            "Add it in Streamlit Cloud → App Settings → Secrets:\n"
+            "```toml\n[anthropic]\napi_key = \"sk-ant-...\"\n```"
+        )
+        st.stop()
+
+    df = load_data()
+
+    # ── Section 1 · Executive Summary ───────────────────────────────────────────────────
+    st.subheader("📊 Executive Safety Summary")
+    st.caption("AI-generated analysis of your entire risk assessment dataset.")
+
+    if "ai_summary" not in st.session_state:
+        st.session_state.ai_summary = None
+
+    if st.button("🔍 Generate Summary", use_container_width=True, disabled=df.empty):
+        with st.container(border=True):
+            st.session_state.ai_summary = st.write_stream(stream_summary(df))
+        st.rerun()
+    elif st.session_state.ai_summary:
+        with st.container(border=True):
+            st.markdown(st.session_state.ai_summary)
+
+    if df.empty:
+        st.info("Add some risk assessments first to enable AI analysis.")
+        st.stop()
+
+    st.divider()
+
+    # ── Section 2 · Control Suggestions ────────────────────────────────────────────────
+    st.subheader("🛡️ AI Control Suggestions")
+    st.caption("Describe a hazard to receive AI-recommended controls using the control hierarchy.")
+
+    with st.form("ai_controls_form"):
+        cca, ccb = st.columns(2)
+        ai_cat  = cca.selectbox("Hazard Category", HAZARD_CATEGORIES)
+        ai_desc = st.text_area(
+            "Hazard Description *", height=80,
+            placeholder="Describe the specific hazard and who might be harmed.",
+        )
+        ccc, ccd = st.columns(2)
+        ai_lik  = ccc.slider("Likelihood", 1, 5, 3)
+        ai_sev  = ccd.slider("Severity",   1, 5, 3)
+        ai_ctrl = st.text_area("Existing Controls (optional)", height=60)
+        ai_go   = st.form_submit_button("💡 Suggest Controls", use_container_width=True)
+
+    if ai_go:
+        if not ai_desc.strip():
+            st.warning("Please enter a hazard description.")
+        else:
+            with st.container(border=True):
+                st.write_stream(stream_controls(ai_cat, ai_desc, ai_lik, ai_sev, ai_ctrl))
+
+    st.divider()
+
+    # ── Section 3 · AI Chat ─────────────────────────────────────────────────────────────
+    st.subheader("💬 Chat with Your Safety Data")
+    st.caption("Ask questions about your risk assessments in plain English.")
+
+    if "chat_api" not in st.session_state:
+        st.session_state.chat_api = []
+    if "chat_ui" not in st.session_state:
+        st.session_state.chat_ui = []
+
+    for role, content in st.session_state.chat_ui:
+        with st.chat_message(role):
+            st.markdown(content)
+
+    if prompt := st.chat_input("Ask about your safety data…"):
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.chat_ui.append(("user", prompt))
+
+        if not st.session_state.chat_api:
+            api_messages = [{"role": "user", "content": (
+                "I have the following H&S risk assessment data for my organisation:\n\n"
+                f"{data_context(df)}\n\n"
+                f"My question: {prompt}"
+            )}]
+        else:
+            api_messages = st.session_state.chat_api + [{"role": "user", "content": prompt}]
+
+        with st.chat_message("assistant"):
+            response = st.write_stream(stream_chat(api_messages))
+
+        st.session_state.chat_ui.append(("assistant", response))
+
+        if not st.session_state.chat_api:
+            st.session_state.chat_api = [
+                api_messages[0],
+                {"role": "assistant", "content": response},
+            ]
+        else:
+            st.session_state.chat_api.extend([
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": response},
+            ])
+
+    if st.session_state.chat_ui:
+        if st.button("🗑️ Clear Chat"):
+            st.session_state.chat_api = []
+            st.session_state.chat_ui = []
+            st.rerun()
 
 
 elif page == "🔔 Alerts & Insights":
