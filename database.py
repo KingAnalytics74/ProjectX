@@ -115,3 +115,25 @@ def update_status(entry_id: int, new_status: str) -> pd.DataFrame:
     except Exception:
         return _csv.update_status(entry_id, new_status)
     return load_data()
+
+
+def update_entry(entry_id: int, updates: dict) -> pd.DataFrame:
+    if not _use_supabase():
+        return _csv.update_entry(entry_id, updates)
+    upd = updates.copy()
+    if "risk_score" in upd:
+        level, _ = _csv.classify_risk(int(upd["risk_score"]))
+        upd["risk_level"] = level
+    if "residual_risk_score" in upd:
+        level, _ = _csv.classify_risk(int(upd["residual_risk_score"]))
+        upd["residual_risk_level"] = level
+    try:
+        resp = requests.patch(
+            f"{_url()}?id=eq.{entry_id}",
+            headers=_headers("return=representation"),
+            json=upd, timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return _csv.update_entry(entry_id, updates)
+    return load_data()

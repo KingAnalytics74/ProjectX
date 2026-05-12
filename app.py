@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 from data_manager import (
     HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats, get_incident_stats,
     INCIDENT_TYPES, INJURY_TYPES, TREATMENT_TYPES, INCIDENT_STATUSES, classify_riddor,
 )
-from database import load_data, save_entry, delete_entry, update_status, _use_supabase
+from database import load_data, save_entry, delete_entry, update_status, update_entry, _use_supabase
 from incident_database import load_incidents, save_incident, update_incident, update_incident_status
 from visualizations import (
     risk_matrix_heatmap, hazard_bar_chart, department_risk_chart,
@@ -977,11 +977,14 @@ elif page == "📁 All Assessments":
         view_df = view_df[mask]
 
     for _, row in view_df.iterrows():
-        rl, _  = classify_risk(int(row["risk_score"]))
-        icon   = {"Low": "🟢", "Medium": "🟡", "High": "🔴", "Very High": "🟣"}.get(rl, "⚪")
+        row_id    = int(row["id"])
+        rl, _     = classify_risk(int(row["risk_score"]))
+        icon      = {"Low": "🟢", "Medium": "🟡", "High": "🔴", "Very High": "🟣"}.get(rl, "⚪")
+        is_editing = st.session_state.get("editing_id") == row_id
         with st.expander(
-            f"{icon} ID {int(row['id'])} | {row['hazard_category']} — "
-            f"{row['department']} | Score: {int(row['risk_score'])} ({row['risk_level']}) | {row['status']}"
+            f"{icon} ID {row_id} | {row['hazard_category']} — "
+            f"{row['department']} | Score: {int(row['risk_score'])} ({row['risk_level']}) | {row['status']}",
+            expanded=is_editing,
         ):
             c1, c2 = st.columns(2)
             c1.markdown(f"**Assessor:** {row['assessor']}")
@@ -996,18 +999,93 @@ elif page == "📁 All Assessments":
             if pd.notna(row.get("further_controls")) and row["further_controls"]:
                 st.markdown(f"**Further Controls:** {row['further_controls']}")
 
-            sa, sb, sc = st.columns([1, 1, 3])
+            _last_by = row.get("last_edited_by", "")
+            _last_at = row.get("last_edited_at", "")
+            if pd.notna(_last_by) and str(_last_by).strip():
+                st.caption(f"✏️ Last edited by **{_last_by}** on {_last_at}")
+
+            sa, sb, sc, sd = st.columns([2, 1, 1, 1])
             new_status = sa.selectbox(
                 "Update Status", ["Open", "In Progress", "Closed"],
                 index=["Open", "In Progress", "Closed"].index(row["status"]),
-                key=f"status_{int(row['id'])}",
+                key=f"status_{row_id}",
             )
-            if sb.button("💾 Update", key=f"upd_{int(row['id'])}"):
-                update_status(int(row["id"]), new_status)
+            if sb.button("💾 Save", key=f"upd_{row_id}"):
+                update_status(row_id, new_status)
                 st.rerun()
-            if sc.button("🗑️ Delete", key=f"del_{int(row['id'])}"):
-                delete_entry(int(row["id"]))
+            if sc.button("✏️ Edit", key=f"edit_btn_{row_id}"):
+                st.session_state["editing_id"] = row_id
                 st.rerun()
+            if sd.button("🗑️ Delete", key=f"del_{row_id}"):
+                delete_entry(row_id)
+                st.session_state.pop("editing_id", None)
+                st.rerun()
+
+            if is_editing:
+                st.divider()
+                st.subheader("✏️ Edit Assessment")
+                with st.form(key=f"edit_form_{row_id}"):
+                    ef1, ef2, ef3 = st.columns(3)
+                    e_assessor   = ef1.text_input("Assessor Name", value=str(row["assessor"]))
+                    _dept_idx    = DEPARTMENTS.index(row["department"]) if row["department"] in DEPARTMENTS else 0
+                    e_department = ef2.selectbox("Department", DEPARTMENTS, index=_dept_idx)
+                    e_location   = ef3.text_input("Location / Area", value=str(row["location"]))
+
+                    ef4, ef5 = st.columns([1, 2])
+                    _haz_idx     = HAZARD_CATEGORIES.index(row["hazard_category"]) if row["hazard_category"] in HAZARD_CATEGORIES else 0
+                    e_hazard_cat  = ef4.selectbox("Hazard Category", HAZARD_CATEGORIES, index=_haz_idx)
+                    e_hazard_desc = ef5.text_area("Hazard Description", value=str(row["hazard_description"]), height=70)
+                    e_activity    = st.text_input("Activity / Task", value=str(row.get("activity", "") or ""))
+
+                    ef6, ef7 = st.columns(2)
+                    e_likelihood = ef6.slider("Likelihood", 1, 5, int(row["likelihood"]))
+                    e_severity   = ef7.slider("Severity",   1, 5, int(row["severity"]))
+
+                    e_existing = st.text_area("Existing Controls", value=str(row["existing_controls"]), height=70)
+                    e_further  = st.text_area("Further Controls",  value=str(row.get("further_controls", "") or ""), height=70)
+
+                    ef8, ef9 = st.columns(2)
+                    e_res_like = ef8.slider("Residual Likelihood", 1, 5, int(row["residual_likelihood"]))
+                    e_res_sev  = ef9.slider("Residual Severity",   1, 5, int(row["residual_severity"]))
+
+                    ef10, ef11 = st.columns(2)
+                    try:
+                        _rev_date = pd.to_datetime(row["review_date"]).date()
+                    except Exception:
+                        _rev_date = date.today() + timedelta(days=90)
+                    e_review_date = ef10.date_input("Next Review Date", value=_rev_date)
+                    _stat_idx     = ["Open", "In Progress", "Closed"].index(row["status"])
+                    e_status      = ef11.selectbox("Status", ["Open", "In Progress", "Closed"], index=_stat_idx)
+
+                    e_edited_by = st.text_input("✏️ Edited by *", placeholder="Your name — required")
+
+                    btn_save, btn_cancel = st.columns(2)
+                    save_edit   = btn_save.form_submit_button("💾 Save Changes", use_container_width=True)
+                    cancel_edit = btn_cancel.form_submit_button("✕ Cancel",       use_container_width=True)
+
+                if cancel_edit:
+                    st.session_state["editing_id"] = None
+                    st.rerun()
+                if save_edit:
+                    if not e_edited_by.strip():
+                        st.error("Please enter your name in 'Edited by'.")
+                    else:
+                        update_entry(row_id, {
+                            "assessor": e_assessor, "department": e_department, "location": e_location,
+                            "hazard_category": e_hazard_cat, "hazard_description": e_hazard_desc,
+                            "activity": e_activity,
+                            "likelihood": e_likelihood, "severity": e_severity,
+                            "risk_score": e_likelihood * e_severity,
+                            "existing_controls": e_existing, "further_controls": e_further,
+                            "residual_likelihood": e_res_like, "residual_severity": e_res_sev,
+                            "residual_risk_score": e_res_like * e_res_sev,
+                            "review_date": e_review_date.strftime("%Y-%m-%d"),
+                            "status": e_status,
+                            "last_edited_by": e_edited_by.strip(),
+                            "last_edited_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        })
+                        st.session_state["editing_id"] = None
+                        st.rerun()
 
 
 elif page == "ℹ️ About":

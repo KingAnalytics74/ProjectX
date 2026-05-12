@@ -11,7 +11,7 @@ COLUMNS = [
     "existing_controls", "further_controls",
     "residual_likelihood", "residual_severity",
     "residual_risk_score", "residual_risk_level",
-    "review_date", "status"
+    "review_date", "status", "last_edited_by", "last_edited_at"
 ]
 
 HAZARD_CATEGORIES = [
@@ -79,6 +79,21 @@ def delete_entry(entry_id: int) -> pd.DataFrame:
 def update_status(entry_id: int, new_status: str) -> pd.DataFrame:
     df = load_data()
     df.loc[df["id"] == entry_id, "status"] = new_status
+    df.to_csv(DATA_FILE, index=False)
+    return df
+
+
+def update_entry(entry_id: int, updates: dict) -> pd.DataFrame:
+    df = load_data()
+    upd = updates.copy()
+    if "risk_score" in upd:
+        level, _ = classify_risk(int(upd["risk_score"]))
+        upd["risk_level"] = level
+    if "residual_risk_score" in upd:
+        level, _ = classify_risk(int(upd["residual_risk_score"]))
+        upd["residual_risk_level"] = level
+    for key, val in upd.items():
+        df.loc[df["id"] == entry_id, key] = val
     df.to_csv(DATA_FILE, index=False)
     return df
 
