@@ -138,3 +138,57 @@ def stream_chat(messages: list[dict]) -> Generator[str, None, None]:
         yield "❌ Invalid API key."
     except Exception as e:
         yield f"❌ AI request failed: {e}"
+
+
+def incident_data_context(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "{}"
+    try:
+        recent5 = (
+            df.sort_values("date", ascending=False)
+            .head(5)[["id", "incident_type", "department", "treatment",
+                       "riddor_reportable", "riddor_category", "days_lost", "status"]]
+            .to_dict(orient="records")
+        )
+        riddor_mask = df["riddor_reportable"].astype(bool)
+        return json.dumps({
+            "total_incidents": len(df),
+            "incident_types": df["incident_type"].value_counts().to_dict(),
+            "departments": df["department"].value_counts().head(8).to_dict(),
+            "treatment_breakdown": df["treatment"].value_counts().to_dict(),
+            "riddor_count": int(riddor_mask.sum()),
+            "riddor_categories": df[riddor_mask]["riddor_category"].value_counts().to_dict(),
+            "total_days_lost": int(df["days_lost"].fillna(0).sum()),
+            "open_count": int((df["status"] != "Closed").sum()),
+            "near_miss_ratio_pct": round(
+                float((df["incident_type"] == "Near Miss").sum() / len(df) * 100), 1
+            ),
+            "recent_5_incidents": recent5,
+        }, indent=2, default=str)
+    except Exception:
+        return json.dumps({"total_incidents": len(df)})
+
+
+def stream_incident_analysis(df: pd.DataFrame) -> Generator[str, None, None]:
+    try:
+        with _client().messages.stream(
+            model=_MODEL,
+            max_tokens=1500,
+            system=_system_block(),
+            messages=[{"role": "user", "content": (
+                "Analyse this workplace incident data and provide:\n"
+                "1. **Incident Pattern Summary** — key headline stats and trends\n"
+                "2. **RIDDOR Compliance Flags** — incidents requiring HSE notification\n"
+                "3. **Root Cause Patterns** — recurring themes in causes or departments\n"
+                "4. **Systemic Improvement Recommendations** — 4–5 specific actions\n"
+                "5. **Leading Indicator Observations** — near miss ratio, early warning signs\n\n"
+                f"Data:\n{incident_data_context(df)}"
+            )}],
+        ) as stream:
+            yield from stream.text_stream
+    except anthropic.AuthenticationError:
+        yield "❌ Invalid API key. Check `[anthropic]` in Streamlit Secrets."
+    except anthropic.RateLimitError:
+        yield "❌ Rate limit reached. Please wait a moment and try again."
+    except Exception as e:
+        yield f"❌ AI request failed: {e}"

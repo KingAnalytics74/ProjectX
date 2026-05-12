@@ -96,3 +96,110 @@ def get_summary_stats(df: pd.DataFrame) -> dict:
         "avg_risk": round(df["risk_score"].mean(), 1),
         "avg_residual": round(df["residual_risk_score"].mean(), 1),
     }
+
+
+# ── Incident management constants ────────────────────────────────────────────
+
+INCIDENT_FILE = "incidents.csv"
+
+INCIDENT_COLUMNS = [
+    "id", "date", "time", "department", "location",
+    "incident_type", "description",
+    "injured_person_name", "injured_person_role",
+    "injury_type", "body_part_affected", "treatment", "days_lost",
+    "riddor_reportable", "riddor_category",
+    "immediate_cause", "root_cause", "contributing_factors",
+    "corrective_actions", "action_owner", "action_due_date",
+    "status", "reported_by",
+]
+
+INCIDENT_TYPES = [
+    "Accident",
+    "Near Miss",
+    "Dangerous Occurrence",
+    "Occupational Disease",
+]
+
+INJURY_TYPES = [
+    "None",
+    "Fracture (finger/thumb/toe)",
+    "Fracture (other bone)",
+    "Amputation",
+    "Dislocation (hip/knee/shoulder)",
+    "Loss of sight",
+    "Crush injury to head/torso",
+    "Burn (>10% body surface)",
+    "Burn (minor)",
+    "Degloving / scalping",
+    "Unconsciousness (head injury or asphyxia)",
+    "Acute illness from biological agent",
+    "Laceration",
+    "Strain / Sprain",
+    "Contusion / Bruising",
+    "Electric shock",
+    "Inhalation / Poisoning",
+    "Other",
+]
+
+TREATMENT_TYPES = [
+    "None",
+    "First Aid",
+    "Medical Treatment",
+    "Hospitalisation",
+    "Fatality",
+]
+
+INCIDENT_STATUSES = [
+    "Reported",
+    "Under Investigation",
+    "Action Required",
+    "Closed",
+]
+
+SPECIFIED_INJURIES = {
+    "Fracture (other bone)",
+    "Amputation",
+    "Dislocation (hip/knee/shoulder)",
+    "Loss of sight",
+    "Crush injury to head/torso",
+    "Burn (>10% body surface)",
+    "Degloving / scalping",
+    "Unconsciousness (head injury or asphyxia)",
+    "Acute illness from biological agent",
+}
+
+
+def classify_riddor(entry: dict) -> "tuple[bool, str]":
+    treatment     = entry.get("treatment", "None")
+    injury_type   = entry.get("injury_type", "None")
+    days_lost     = int(entry.get("days_lost", 0) or 0)
+    incident_type = entry.get("incident_type", "")
+    if treatment == "Fatality":
+        return True, "Fatality"
+    if injury_type in SPECIFIED_INJURIES:
+        return True, "Specified injury"
+    if days_lost >= 7 and treatment not in ("None", "First Aid"):
+        return True, "7-day absence"
+    if incident_type == "Dangerous Occurrence":
+        return True, "Dangerous occurrence"
+    if incident_type == "Occupational Disease":
+        return True, "Occupational disease"
+    return False, "Not reportable"
+
+
+def get_incident_stats(df: pd.DataFrame) -> dict:
+    if df.empty:
+        return {k: 0 for k in [
+            "total", "accidents", "near_misses", "dangerous_occurrences",
+            "occupational_diseases", "riddor_count", "open", "days_lost_total",
+        ]}
+    return {
+        "total":                    len(df),
+        "accidents":                int((df["incident_type"] == "Accident").sum()),
+        "near_misses":              int((df["incident_type"] == "Near Miss").sum()),
+        "dangerous_occurrences":    int((df["incident_type"] == "Dangerous Occurrence").sum()),
+        "occupational_diseases":    int((df["incident_type"] == "Occupational Disease").sum()),
+        "riddor_count":             int(df["riddor_reportable"].astype(bool).sum()),
+        "open":                     int((df["status"] != "Closed").sum()),
+        "days_lost_total":          int(df["days_lost"].fillna(0).sum()),
+    }

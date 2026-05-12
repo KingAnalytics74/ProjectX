@@ -3,13 +3,19 @@ import pandas as pd
 import numpy as np
 from datetime import date, timedelta
 
-from data_manager import HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats
+from data_manager import (
+    HAZARD_CATEGORIES, DEPARTMENTS, classify_risk, get_summary_stats, get_incident_stats,
+    INCIDENT_TYPES, INJURY_TYPES, TREATMENT_TYPES, INCIDENT_STATUSES, classify_riddor,
+)
 from database import load_data, save_entry, delete_entry, update_status, _use_supabase
+from incident_database import load_incidents, save_incident, update_incident, update_incident_status
 from visualizations import (
     risk_matrix_heatmap, hazard_bar_chart, department_risk_chart,
     risk_trend_chart, risk_reduction_chart, monthly_volume_chart,
     risk_level_stacked_chart, control_effectiveness_chart, department_trend_lines,
     spc_imr_chart, spc_mr_chart, insights_risk_heatmap,
+    incident_type_bar, incident_department_chart, riddor_donut,
+    incident_trend_line, severity_treatment_heatmap,
 )
 
 st.set_page_config(
@@ -26,7 +32,7 @@ with st.sidebar:
     page = st.radio(
         "Navigate",
         ["📋 New Assessment", "📊 Dashboard", "📈 Trends",
-         "💡 Insights", "🤖 AI Assistant", "🔔 Alerts & Insights",
+         "💡 Insights", "🤖 AI Assistant", "🚨 Incident Management", "🔔 Alerts & Insights",
          "📁 All Assessments", "ℹ️ About"],
         label_visibility="collapsed",
     )
@@ -42,6 +48,10 @@ with st.sidebar:
         _active["review_date"] = pd.to_datetime(_active["review_date"])
         _overdue = len(_active[_active["review_date"] < pd.Timestamp(date.today())])
         st.markdown(f"**Overdue Reviews:** :{'red' if _overdue > 0 else 'green'}[{_overdue}]")
+    _inc_df    = load_incidents()
+    _inc_stats = get_incident_stats(_inc_df)
+    st.markdown(f"**Incidents:** {_inc_stats['total']}")
+    st.markdown(f"**RIDDOR Reportable:** :{'red' if _inc_stats['riddor_count'] > 0 else 'green'}[{_inc_stats['riddor_count']}]")
     st.divider()
     if _use_supabase():
         st.success("🟢 Connected to Supabase")
@@ -538,6 +548,309 @@ elif page == "🤖 AI Assistant":
             st.session_state.chat_api = []
             st.session_state.chat_ui = []
             st.rerun()
+
+
+elif page == "🚨 Incident Management":
+    from ai_advisor import ai_available, stream_incident_analysis, incident_data_context, stream_chat
+
+    st.title("🚨 Incident Management")
+    st.caption("Log, investigate and analyse workplace incidents — RIDDOR auto-classification included.")
+
+    inc_df = load_incidents()
+
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Log Incident", "🔍 Investigate", "📊 Dashboard", "🤖 AI Analysis"])
+
+    with tab1:
+        st.subheader("Log a New Incident")
+        with st.form("incident_form", clear_on_submit=True):
+            st.subheader("1 · Incident Details")
+            d1, d2, d3 = st.columns(3)
+            inc_date    = d1.date_input("Date *", value=date.today())
+            inc_time    = d2.text_input("Time (HH:MM)", placeholder="e.g. 14:30")
+            reported_by = d3.text_input("Reported By *", placeholder="Your name")
+
+            st.subheader("2 · Location & Classification")
+            l1, l2, l3 = st.columns(3)
+            inc_dept     = l1.selectbox("Department *", DEPARTMENTS)
+            inc_location = l2.text_input("Location / Area *", placeholder="e.g. Warehouse Bay 3")
+            inc_type     = l3.selectbox("Incident Type *", INCIDENT_TYPES)
+
+            st.subheader("3 · Description")
+            inc_desc = st.text_area(
+                "What happened? *", height=100,
+                placeholder="Describe the incident — what occurred, sequence of events, immediate outcome.",
+            )
+
+            st.subheader("4 · Injured Person")
+            st.caption("Leave blank if not applicable (e.g. Near Miss or Dangerous Occurrence).")
+            p1, p2, p3, p4 = st.columns(4)
+            injured_name = p1.text_input("Name")
+            injured_role = p2.text_input("Job Role / Title")
+            injury_type  = p3.selectbox("Injury Type", INJURY_TYPES)
+            body_part    = p4.text_input("Body Part Affected")
+
+            st.subheader("5 · Treatment & Absence")
+            t1, t2 = st.columns(2)
+            treatment = t1.selectbox("Treatment Required", TREATMENT_TYPES)
+            days_lost = int(t2.number_input("Working Days Lost", min_value=0, step=1, value=0))
+
+            st.subheader("6 · Investigation (initial)")
+            imm_cause   = st.text_area("Immediate Cause (optional)", height=60,
+                                       placeholder="The direct act or condition that caused the incident.")
+            root_cause  = st.text_area("Root Cause (optional)", height=60,
+                                       placeholder="The underlying management system failure.")
+            contributing = st.text_area("Contributing Factors (optional)", height=60,
+                                        placeholder="Environmental, human, or organisational factors.")
+
+            st.subheader("7 · Corrective Actions")
+            actions      = st.text_area("Actions Required (optional)", height=80,
+                                        placeholder="List corrective actions to prevent recurrence.")
+            a1, a2       = st.columns(2)
+            action_owner = a1.text_input("Action Owner", placeholder="Person responsible")
+            action_due   = a2.date_input("Action Due Date", value=date.today() + timedelta(days=30))
+
+            st.subheader("8 · Status")
+            inc_status = st.selectbox("Initial Status", INCIDENT_STATUSES)
+
+            submit_inc = st.form_submit_button("💾 Save Incident", use_container_width=True)
+
+        if submit_inc:
+            if not reported_by or not inc_location or not inc_desc:
+                st.error("Please complete all required fields (marked *).")
+            else:
+                entry = {
+                    "date": inc_date.strftime("%Y-%m-%d"),
+                    "time": inc_time,
+                    "department": inc_dept,
+                    "location": inc_location,
+                    "incident_type": inc_type,
+                    "description": inc_desc,
+                    "injured_person_name": injured_name,
+                    "injured_person_role": injured_role,
+                    "injury_type": injury_type,
+                    "body_part_affected": body_part,
+                    "treatment": treatment,
+                    "days_lost": days_lost,
+                    "immediate_cause": imm_cause,
+                    "root_cause": root_cause,
+                    "contributing_factors": contributing,
+                    "corrective_actions": actions,
+                    "action_owner": action_owner,
+                    "action_due_date": action_due.strftime("%Y-%m-%d"),
+                    "status": inc_status,
+                    "reported_by": reported_by,
+                }
+                save_incident(entry)
+                riddor_flag, riddor_cat = classify_riddor(entry)
+                st.success("Incident logged successfully.")
+                if riddor_flag:
+                    st.error(
+                        f"⚠️ **RIDDOR REPORTABLE — Category: {riddor_cat}**\n\n"
+                        "This incident must be reported to the HSE within the statutory timeframe. "
+                        "Visit the HSE RIDDOR online reporting service to submit the report."
+                    )
+                else:
+                    st.info("ℹ️ Not RIDDOR reportable based on the information provided. Review if circumstances change.")
+
+    with tab2:
+        if inc_df.empty:
+            st.info("No incidents logged yet. Use the 'Log Incident' tab to record your first incident.")
+        else:
+            open_mask = inc_df["status"] != "Closed"
+            display_df = inc_df[open_mask] if open_mask.any() else inc_df
+            options = {
+                int(row["id"]): (
+                    f"ID {int(row['id'])} | {row['incident_type']} — "
+                    f"{row['department']} | {row['date']} | {row['status']}"
+                )
+                for _, row in display_df.iterrows()
+            }
+            sel_id = st.selectbox(
+                "Select incident to investigate",
+                options=list(options.keys()),
+                format_func=lambda x: options[x],
+            )
+            if sel_id is not None:
+                row = inc_df[inc_df["id"] == sel_id].iloc[0]
+                riddor_badge = f"🔴 {row['riddor_category']}" if row["riddor_reportable"] else "🟢 Not reportable"
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"**Date:** {row['date']}")
+                c1.markdown(f"**Department:** {row['department']}")
+                c1.markdown(f"**Location:** {row['location']}")
+                c2.markdown(f"**Reported by:** {row['reported_by']}")
+                c2.markdown(f"**Treatment:** {row['treatment']}")
+                c2.markdown(f"**Days Lost:** {int(row['days_lost'])}")
+                c3.markdown(f"**RIDDOR:** {riddor_badge}")
+                c3.markdown(f"**Status:** {row['status']}")
+                st.markdown(f"**Description:** {row['description']}")
+                st.divider()
+                with st.form("investigate_form"):
+                    st.subheader("Investigation Details")
+                    imm  = st.text_area("Immediate Cause",    value=str(row.get("immediate_cause", "") or ""),    height=80)
+                    root = st.text_area("Root Cause",         value=str(row.get("root_cause", "") or ""),         height=80)
+                    cont = st.text_area("Contributing Factors", value=str(row.get("contributing_factors", "") or ""), height=80)
+
+                    st.subheader("Corrective Actions")
+                    acts  = st.text_area("Actions Required", value=str(row.get("corrective_actions", "") or ""), height=100)
+                    ca1, ca2 = st.columns(2)
+                    own   = ca1.text_input("Action Owner", value=str(row.get("action_owner", "") or ""))
+                    try:
+                        due_default = pd.to_datetime(row.get("action_due_date")).date()
+                    except Exception:
+                        due_default = date.today() + timedelta(days=30)
+                    due   = ca2.date_input("Action Due Date", value=due_default)
+
+                    new_st = st.selectbox(
+                        "Status",
+                        INCIDENT_STATUSES,
+                        index=INCIDENT_STATUSES.index(row["status"]) if row["status"] in INCIDENT_STATUSES else 0,
+                    )
+                    save_inv = st.form_submit_button("💾 Save Investigation", use_container_width=True)
+
+                if save_inv:
+                    update_incident(int(sel_id), {
+                        "immediate_cause": imm, "root_cause": root,
+                        "contributing_factors": cont, "corrective_actions": acts,
+                        "action_owner": own, "action_due_date": due.strftime("%Y-%m-%d"),
+                        "status": new_st,
+                    })
+                    st.success("Investigation saved.")
+                    st.rerun()
+
+    with tab3:
+        if inc_df.empty:
+            st.info("No incidents to display yet.")
+        else:
+            inc_stats = get_incident_stats(inc_df)
+            k1, k2, k3, k4, k5, k6 = st.columns(6)
+            k1.metric("Total Incidents",    inc_stats["total"])
+            k2.metric("Accidents",          inc_stats["accidents"])
+            k3.metric("Near Misses",        inc_stats["near_misses"])
+            k4.metric("RIDDOR Reportable",  inc_stats["riddor_count"])
+            k5.metric("Open",               inc_stats["open"])
+            k6.metric("Total Days Lost",    inc_stats["days_lost_total"])
+
+            st.divider()
+
+            with st.expander("🔍 Filters", expanded=False):
+                fc1, fc2, fc3 = st.columns(3)
+                dept_f = fc1.multiselect("Department",    inc_df["department"].unique().tolist(),    default=[])
+                type_f = fc2.multiselect("Incident Type", inc_df["incident_type"].unique().tolist(), default=[])
+                stat_f = fc3.multiselect("Status",        inc_df["status"].unique().tolist(),        default=[])
+
+            filtered_inc = inc_df.copy()
+            if dept_f:
+                filtered_inc = filtered_inc[filtered_inc["department"].isin(dept_f)]
+            if type_f:
+                filtered_inc = filtered_inc[filtered_inc["incident_type"].isin(type_f)]
+            if stat_f:
+                filtered_inc = filtered_inc[filtered_inc["status"].isin(stat_f)]
+
+            if filtered_inc.empty:
+                st.warning("No records match the selected filters.")
+            else:
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.plotly_chart(incident_type_bar(filtered_inc), use_container_width=True)
+                with col_b:
+                    st.plotly_chart(riddor_donut(filtered_inc), use_container_width=True)
+
+                col_c, col_d = st.columns(2)
+                with col_c:
+                    st.plotly_chart(incident_department_chart(filtered_inc), use_container_width=True)
+                with col_d:
+                    st.plotly_chart(severity_treatment_heatmap(filtered_inc), use_container_width=True)
+
+                if len(filtered_inc) >= 2:
+                    st.plotly_chart(incident_trend_line(filtered_inc), use_container_width=True)
+
+                riddor_items = filtered_inc[filtered_inc["riddor_reportable"].astype(bool)]
+                if not riddor_items.empty:
+                    st.divider()
+                    st.error(f"⚠️ **{len(riddor_items)} RIDDOR Reportable Incident(s) — HSE notification required**")
+                    st.dataframe(
+                        riddor_items[[
+                            "id", "date", "department", "incident_type",
+                            "riddor_category", "treatment", "days_lost", "status",
+                        ]].rename(columns={
+                            "id": "ID", "date": "Date", "department": "Dept",
+                            "incident_type": "Type", "riddor_category": "RIDDOR Category",
+                            "treatment": "Treatment", "days_lost": "Days Lost", "status": "Status",
+                        }),
+                        use_container_width=True, hide_index=True,
+                    )
+
+    with tab4:
+        if not ai_available():
+            st.warning(
+                "**AI features require an Anthropic API key.**\n\n"
+                "Add it in Streamlit Cloud → App Settings → Secrets:\n"
+                "```toml\n[anthropic]\napi_key = \"sk-ant-...\"\n```"
+            )
+        elif inc_df.empty:
+            st.info("Log some incidents first to enable AI analysis.")
+        else:
+            st.subheader("📊 Incident Pattern Analysis")
+            st.caption("AI-generated analysis of your incident data for systemic improvement.")
+
+            if "inc_summary" not in st.session_state:
+                st.session_state.inc_summary = None
+
+            if st.button("🔍 Generate Incident Analysis", use_container_width=True):
+                with st.container(border=True):
+                    st.session_state.inc_summary = st.write_stream(stream_incident_analysis(inc_df))
+                st.rerun()
+            elif st.session_state.inc_summary:
+                with st.container(border=True):
+                    st.markdown(st.session_state.inc_summary)
+
+            st.divider()
+            st.subheader("💬 Chat about Incidents")
+            st.caption("Ask questions about your incident data in plain English.")
+
+            if "inc_chat_api" not in st.session_state:
+                st.session_state.inc_chat_api = []
+            if "inc_chat_ui" not in st.session_state:
+                st.session_state.inc_chat_ui = []
+
+            for role, content in st.session_state.inc_chat_ui:
+                with st.chat_message(role):
+                    st.markdown(content)
+
+            if prompt := st.chat_input("Ask about your incident data…", key="inc_chat_input"):
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                st.session_state.inc_chat_ui.append(("user", prompt))
+
+                if not st.session_state.inc_chat_api:
+                    api_messages = [{"role": "user", "content": (
+                        "I have the following workplace incident data for my organisation:\n\n"
+                        f"{incident_data_context(inc_df)}\n\n"
+                        f"My question: {prompt}"
+                    )}]
+                else:
+                    api_messages = st.session_state.inc_chat_api + [{"role": "user", "content": prompt}]
+
+                with st.chat_message("assistant"):
+                    response = st.write_stream(stream_chat(api_messages))
+
+                st.session_state.inc_chat_ui.append(("assistant", response))
+                if not st.session_state.inc_chat_api:
+                    st.session_state.inc_chat_api = [
+                        api_messages[0],
+                        {"role": "assistant", "content": response},
+                    ]
+                else:
+                    st.session_state.inc_chat_api.extend([
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": response},
+                    ])
+
+            if st.session_state.inc_chat_ui:
+                if st.button("🗑️ Clear Incident Chat"):
+                    st.session_state.inc_chat_api = []
+                    st.session_state.inc_chat_ui = []
+                    st.rerun()
 
 
 elif page == "🔔 Alerts & Insights":

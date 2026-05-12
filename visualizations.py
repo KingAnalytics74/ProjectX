@@ -437,6 +437,155 @@ def insights_risk_heatmap(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+INCIDENT_COLOURS = {
+    "Accident": "#e74c3c",
+    "Near Miss": "#f39c12",
+    "Dangerous Occurrence": "#8e44ad",
+    "Occupational Disease": "#3498db",
+}
+
+
+def incident_type_bar(df: pd.DataFrame) -> go.Figure:
+    if df.empty or "date" not in df.columns:
+        return go.Figure()
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"], errors="coerce").dt.to_period("M").astype(str)
+    counts = tmp.groupby(["_month", "incident_type"]).size().reset_index(name="count")
+    fig = go.Figure()
+    for itype, colour in INCIDENT_COLOURS.items():
+        subset = counts[counts["incident_type"] == itype]
+        if not subset.empty:
+            fig.add_trace(go.Bar(x=subset["_month"], y=subset["count"], name=itype, marker_color=colour))
+    fig.update_layout(
+        barmode="stack",
+        title="Incidents by Type — Monthly",
+        xaxis_title="Month", yaxis_title="Count",
+        height=340,
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    return fig
+
+
+def incident_department_chart(df: pd.DataFrame) -> go.Figure:
+    if df.empty:
+        return go.Figure()
+    counts = df.groupby("department").size().sort_values(ascending=True).reset_index(name="count")
+    fig = go.Figure(go.Bar(
+        x=counts["count"], y=counts["department"],
+        orientation="h",
+        marker_color="#004B87",
+        text=counts["count"], textposition="outside",
+    ))
+    fig.update_layout(
+        title="Incidents by Department",
+        xaxis_title="Count",
+        height=max(300, 50 * len(counts) + 80),
+        margin=dict(l=40, r=60, t=40, b=40),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
+        showlegend=False,
+    )
+    return fig
+
+
+def riddor_donut(df: pd.DataFrame) -> go.Figure:
+    if df.empty:
+        return go.Figure()
+    riddor_n = int(df["riddor_reportable"].astype(bool).sum())
+    fig = go.Figure(go.Pie(
+        labels=["RIDDOR Reportable", "Not Reportable"],
+        values=[riddor_n, len(df) - riddor_n],
+        hole=0.5,
+        marker_colors=["#e74c3c", "#27ae60"],
+    ))
+    fig.update_layout(
+        title="RIDDOR Reportability",
+        height=320,
+        margin=dict(l=40, r=40, t=40, b=40),
+        paper_bgcolor=_PAPER, font=dict(color=_FONT),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.1),
+    )
+    return fig
+
+
+def incident_trend_line(df: pd.DataFrame) -> go.Figure:
+    if df.empty or "date" not in df.columns:
+        return go.Figure()
+    tmp = df.copy()
+    tmp["_month"] = pd.to_datetime(tmp["date"], errors="coerce").dt.to_period("M")
+    trend = tmp.groupby("_month").size().reset_index(name="count")
+    trend["label"] = trend["_month"].astype(str)
+    values = trend["count"].tolist()
+    labels = trend["label"].tolist()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=labels, y=values,
+        mode="lines+markers",
+        line=dict(color="#e74c3c", width=2),
+        marker=dict(size=8, color="#e74c3c"),
+        fill="tozeroy",
+        fillcolor="rgba(231,76,60,0.12)",
+        name="Monthly Incidents",
+    ))
+    if len(values) >= 2:
+        x_idx  = np.arange(len(values))
+        coeffs = np.polyfit(x_idx, values, 1)
+        last_p = trend["_month"].iloc[-1]
+        f_labels = [(last_p + i).to_timestamp().strftime("%Y-%m") for i in range(1, 4)]
+        f_vals   = [max(0.0, float(np.polyval(coeffs, len(values) - 1 + i))) for i in range(1, 4)]
+        fig.add_trace(go.Scatter(
+            x=[labels[-1]] + f_labels,
+            y=[float(values[-1])] + f_vals,
+            mode="lines+markers",
+            line=dict(color="#e67e22", width=2, dash="dot"),
+            marker=dict(size=7, color="#e67e22", symbol="diamond"),
+            name="3-Month Forecast",
+        ))
+    fig.update_layout(
+        title="Monthly Incident Frequency — Historical & Forecast",
+        xaxis_title="Month", yaxis_title="Incidents",
+        height=340,
+        margin=dict(l=40, r=20, t=40, b=40),
+        paper_bgcolor=_PAPER, plot_bgcolor=_PLOT, font=dict(color=_FONT),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    return fig
+
+
+def severity_treatment_heatmap(df: pd.DataFrame) -> go.Figure:
+    if df.empty:
+        return go.Figure()
+    treatment_order = ["None", "First Aid", "Medical Treatment", "Hospitalisation", "Fatality"]
+    present_cols = [t for t in treatment_order if t in df["treatment"].unique()]
+    pivot = (
+        df.groupby(["incident_type", "treatment"])
+        .size()
+        .reset_index(name="count")
+        .pivot(index="incident_type", columns="treatment", values="count")
+        .reindex(columns=present_cols, fill_value=0)
+        .fillna(0)
+    )
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values.tolist(),
+        x=pivot.columns.tolist(),
+        y=pivot.index.tolist(),
+        colorscale="Reds",
+        text=pivot.values.astype(int).tolist(),
+        texttemplate="%{text}",
+        showscale=True,
+    ))
+    fig.update_layout(
+        title="Incident Type vs Treatment Severity",
+        xaxis_title="Treatment Level",
+        yaxis_title="Incident Type",
+        height=360,
+        margin=dict(l=120, r=40, t=40, b=80),
+        paper_bgcolor=_PAPER, font=dict(color=_FONT),
+    )
+    return fig
+
+
 def spc_mr_chart(labels: list, mr_values: list, ucl_mr: float, cl_mr: float) -> go.Figure:
     signal_idx  = {i for i, v in enumerate(mr_values) if v > ucl_mr}
     bar_colours = ["#e74c3c" if i in signal_idx else "#8e44ad" for i in range(len(mr_values))]
