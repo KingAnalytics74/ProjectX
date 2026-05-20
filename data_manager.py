@@ -7,8 +7,10 @@ DATA_FILE = "risk_assessments.csv"
 COLUMNS = [
     "id", "date", "assessor", "department", "location",
     "hazard_category", "hazard_description", "activity",
+    "who_harmed",
     "likelihood", "severity", "risk_score", "risk_level",
     "existing_controls", "further_controls",
+    "action_timescale", "responsible_person",
     "residual_likelihood", "residual_severity",
     "residual_risk_score", "residual_risk_level",
     "review_date", "status", "last_edited_by", "last_edited_at"
@@ -19,7 +21,9 @@ HAZARD_CATEGORIES = [
     "Electrical", "Fire", "Machinery / Equipment", "Slips, Trips & Falls",
     "Noise & Vibration", "Lone Working", "Stress & Mental Health",
     "Display Screen Equipment", "Confined Spaces", "Biological Hazards",
-    "Violence & Aggression", "Environmental"
+    "Violence & Aggression", "Environmental",
+    "Livestock / Animal Handling", "Dust / Airborne Particles",
+    "Welfare / Work Environment", "Pesticides / Agrochemicals",
 ]
 
 DEPARTMENTS = [

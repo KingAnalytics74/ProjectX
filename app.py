@@ -75,10 +75,15 @@ if page == "📋 New Assessment":
         hazard_category    = col4.selectbox("Hazard Category *", HAZARD_CATEGORIES)
         hazard_description = col5.text_area(
             "Hazard Description *",
-            placeholder="Describe the hazard and who might be harmed.",
+            placeholder="Describe the hazard in detail.",
             height=80,
         )
-        activity = st.text_input("Activity / Task", placeholder="e.g. Loading pallets using forklift")
+        activity   = st.text_input("Activity / Task", placeholder="e.g. Loading pallets using forklift")
+        who_harmed = st.text_area(
+            "Who might be harmed and how? *",
+            placeholder="e.g. Field workers — inhalation of chemical spray causing nausea, neurological effects or death.",
+            height=70,
+        )
 
         st.subheader("3 · Initial Risk Rating")
         st.caption("Rate **before** controls are applied.")
@@ -101,6 +106,15 @@ if page == "📋 New Assessment":
             placeholder="List any additional controls required to reduce the risk.",
             height=80,
         )
+        col_act, col_resp = st.columns(2)
+        action_timescale   = col_act.text_input(
+            "Timescale for Further Actions",
+            placeholder="e.g. 2 weeks, 1 month, 3 months",
+        )
+        responsible_person = col_resp.text_input(
+            "Responsible Person (job title)",
+            placeholder="e.g. Assistant Manager, Supervisor",
+        )
 
         st.subheader("5 · Residual Risk Rating")
         st.caption("Rate **after** all controls are applied.")
@@ -120,15 +134,17 @@ if page == "📋 New Assessment":
         submitted = st.form_submit_button("💾 Save Assessment", use_container_width=True)
 
     if submitted:
-        if not assessor or not location or not hazard_description or not existing_controls:
+        if not assessor or not location or not hazard_description or not who_harmed or not existing_controls:
             st.error("Please complete all required fields (marked *).")
         else:
             save_entry({
                 "assessor": assessor, "department": department, "location": location,
                 "hazard_category": hazard_category, "hazard_description": hazard_description,
-                "activity": activity, "likelihood": likelihood, "severity": severity,
+                "activity": activity, "who_harmed": who_harmed,
+                "likelihood": likelihood, "severity": severity,
                 "risk_score": risk_score, "risk_level": risk_level,
                 "existing_controls": existing_controls, "further_controls": further_controls,
+                "action_timescale": action_timescale, "responsible_person": responsible_person,
                 "residual_likelihood": res_likelihood, "residual_severity": res_severity,
                 "residual_risk_score": residual_score, "residual_risk_level": residual_level,
                 "review_date": review_date.strftime("%Y-%m-%d"), "status": status,
@@ -995,9 +1011,19 @@ elif page == "📁 All Assessments":
             c2.markdown(f"**Risk Score:** {int(row['risk_score'])}  ({row['risk_level']})")
             c2.markdown(f"**Residual Score:** {int(row['residual_risk_score'])}  ({row['residual_risk_level']})")
             c2.markdown(f"**Review Date:** {row['review_date']}")
+            _who = row.get("who_harmed", "")
+            if pd.notna(_who) and str(_who).strip():
+                st.markdown(f"**Who might be harmed:** {_who}")
             st.markdown(f"**Existing Controls:** {row['existing_controls']}")
             if pd.notna(row.get("further_controls")) and row["further_controls"]:
                 st.markdown(f"**Further Controls:** {row['further_controls']}")
+            _timescale = row.get("action_timescale", "")
+            _resp      = row.get("responsible_person", "")
+            if (pd.notna(_timescale) and str(_timescale).strip()) or (pd.notna(_resp) and str(_resp).strip()):
+                st.markdown(
+                    f"**Timescale:** {_timescale if pd.notna(_timescale) and str(_timescale).strip() else '—'}"
+                    f"  |  **Responsible Person:** {_resp if pd.notna(_resp) and str(_resp).strip() else '—'}"
+                )
 
             _last_by = row.get("last_edited_by", "")
             _last_at = row.get("last_edited_at", "")
@@ -1036,6 +1062,7 @@ elif page == "📁 All Assessments":
                     e_hazard_cat  = ef4.selectbox("Hazard Category", HAZARD_CATEGORIES, index=_haz_idx)
                     e_hazard_desc = ef5.text_area("Hazard Description", value=str(row["hazard_description"]), height=70)
                     e_activity    = st.text_input("Activity / Task", value=str(row.get("activity", "") or ""))
+                    e_who_harmed  = st.text_area("Who might be harmed and how?", value=str(row.get("who_harmed", "") or ""), height=60)
 
                     ef6, ef7 = st.columns(2)
                     e_likelihood = ef6.slider("Likelihood", 1, 5, int(row["likelihood"]))
@@ -1043,6 +1070,9 @@ elif page == "📁 All Assessments":
 
                     e_existing = st.text_area("Existing Controls", value=str(row["existing_controls"]), height=70)
                     e_further  = st.text_area("Further Controls",  value=str(row.get("further_controls", "") or ""), height=70)
+                    ef_act, ef_resp = st.columns(2)
+                    e_action_timescale   = ef_act.text_input("Timescale for Further Actions", value=str(row.get("action_timescale", "") or ""))
+                    e_responsible_person = ef_resp.text_input("Responsible Person", value=str(row.get("responsible_person", "") or ""))
 
                     ef8, ef9 = st.columns(2)
                     e_res_like = ef8.slider("Residual Likelihood", 1, 5, int(row["residual_likelihood"]))
@@ -1073,10 +1103,11 @@ elif page == "📁 All Assessments":
                         update_entry(row_id, {
                             "assessor": e_assessor, "department": e_department, "location": e_location,
                             "hazard_category": e_hazard_cat, "hazard_description": e_hazard_desc,
-                            "activity": e_activity,
+                            "activity": e_activity, "who_harmed": e_who_harmed,
                             "likelihood": e_likelihood, "severity": e_severity,
                             "risk_score": e_likelihood * e_severity,
                             "existing_controls": e_existing, "further_controls": e_further,
+                            "action_timescale": e_action_timescale, "responsible_person": e_responsible_person,
                             "residual_likelihood": e_res_like, "residual_severity": e_res_sev,
                             "residual_risk_score": e_res_like * e_res_sev,
                             "review_date": e_review_date.strftime("%Y-%m-%d"),
