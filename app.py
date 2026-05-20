@@ -1012,28 +1012,32 @@ elif page == "📁 All Assessments":
             c2.markdown(f"**Residual Score:** {int(row['residual_risk_score'])}  ({row['residual_risk_level']})")
             c2.markdown(f"**Review Date:** {row['review_date']}")
             _who = row.get("who_harmed", "")
-            if pd.notna(_who) and str(_who).strip():
+            if pd.notna(_who) and str(_who).strip() and str(_who) != "nan":
                 st.markdown(f"**Who might be harmed:** {_who}")
             st.markdown(f"**Existing Controls:** {row['existing_controls']}")
             if pd.notna(row.get("further_controls")) and row["further_controls"]:
                 st.markdown(f"**Further Controls:** {row['further_controls']}")
             _timescale = row.get("action_timescale", "")
             _resp      = row.get("responsible_person", "")
-            if (pd.notna(_timescale) and str(_timescale).strip()) or (pd.notna(_resp) and str(_resp).strip()):
+            _ts_ok  = pd.notna(_timescale) and str(_timescale).strip() and str(_timescale) != "nan"
+            _res_ok = pd.notna(_resp)      and str(_resp).strip()      and str(_resp)      != "nan"
+            if _ts_ok or _res_ok:
                 st.markdown(
-                    f"**Timescale:** {_timescale if pd.notna(_timescale) and str(_timescale).strip() else '—'}"
-                    f"  |  **Responsible Person:** {_resp if pd.notna(_resp) and str(_resp).strip() else '—'}"
+                    f"**Timescale:** {_timescale if _ts_ok else '—'}"
+                    f"  |  **Responsible Person:** {_resp if _res_ok else '—'}"
                 )
 
             _last_by = row.get("last_edited_by", "")
             _last_at = row.get("last_edited_at", "")
-            if pd.notna(_last_by) and str(_last_by).strip():
-                st.caption(f"✏️ Last edited by **{_last_by}** on {_last_at}")
+            if pd.notna(_last_by) and str(_last_by).strip() and str(_last_by) != "nan":
+                _at_str = str(_last_at) if (pd.notna(_last_at) and str(_last_at) != "nan") else "unknown date"
+                st.caption(f"✏️ Last edited by **{_last_by}** on {_at_str}")
 
+            _STATUS_OPTS = ["Open", "In Progress", "Closed"]
             sa, sb, sc, sd = st.columns([2, 1, 1, 1])
             new_status = sa.selectbox(
-                "Update Status", ["Open", "In Progress", "Closed"],
-                index=["Open", "In Progress", "Closed"].index(row["status"]),
+                "Update Status", _STATUS_OPTS,
+                index=_STATUS_OPTS.index(row["status"]) if row["status"] in _STATUS_OPTS else 0,
                 key=f"status_{row_id}",
             )
             if sb.button("💾 Save", key=f"upd_{row_id}"):
@@ -1050,29 +1054,31 @@ elif page == "📁 All Assessments":
             if is_editing:
                 st.divider()
                 st.subheader("✏️ Edit Assessment")
+                # safe string: converts NaN/None to "" instead of "nan"
+                _sv = lambda v: "" if (v is None or (isinstance(v, float) and pd.isna(v))) else str(v)
                 with st.form(key=f"edit_form_{row_id}"):
                     ef1, ef2, ef3 = st.columns(3)
-                    e_assessor   = ef1.text_input("Assessor Name", value=str(row["assessor"]))
+                    e_assessor   = ef1.text_input("Assessor Name", value=_sv(row.get("assessor", "")))
                     _dept_idx    = DEPARTMENTS.index(row["department"]) if row["department"] in DEPARTMENTS else 0
                     e_department = ef2.selectbox("Department", DEPARTMENTS, index=_dept_idx)
-                    e_location   = ef3.text_input("Location / Area", value=str(row["location"]))
+                    e_location   = ef3.text_input("Location / Area", value=_sv(row.get("location", "")))
 
                     ef4, ef5 = st.columns([1, 2])
                     _haz_idx     = HAZARD_CATEGORIES.index(row["hazard_category"]) if row["hazard_category"] in HAZARD_CATEGORIES else 0
                     e_hazard_cat  = ef4.selectbox("Hazard Category", HAZARD_CATEGORIES, index=_haz_idx)
-                    e_hazard_desc = ef5.text_area("Hazard Description", value=str(row["hazard_description"]), height=70)
-                    e_activity    = st.text_input("Activity / Task", value=str(row.get("activity", "") or ""))
-                    e_who_harmed  = st.text_area("Who might be harmed and how?", value=str(row.get("who_harmed", "") or ""), height=60)
+                    e_hazard_desc = ef5.text_area("Hazard Description", value=_sv(row.get("hazard_description", "")), height=70)
+                    e_activity    = st.text_input("Activity / Task", value=_sv(row.get("activity", "")))
+                    e_who_harmed  = st.text_area("Who might be harmed and how?", value=_sv(row.get("who_harmed", "")), height=60)
 
                     ef6, ef7 = st.columns(2)
                     e_likelihood = ef6.slider("Likelihood", 1, 5, int(row["likelihood"]))
                     e_severity   = ef7.slider("Severity",   1, 5, int(row["severity"]))
 
-                    e_existing = st.text_area("Existing Controls", value=str(row["existing_controls"]), height=70)
-                    e_further  = st.text_area("Further Controls",  value=str(row.get("further_controls", "") or ""), height=70)
+                    e_existing = st.text_area("Existing Controls", value=_sv(row.get("existing_controls", "")), height=70)
+                    e_further  = st.text_area("Further Controls",  value=_sv(row.get("further_controls", "")), height=70)
                     ef_act, ef_resp = st.columns(2)
-                    e_action_timescale   = ef_act.text_input("Timescale for Further Actions", value=str(row.get("action_timescale", "") or ""))
-                    e_responsible_person = ef_resp.text_input("Responsible Person", value=str(row.get("responsible_person", "") or ""))
+                    e_action_timescale   = ef_act.text_input("Timescale for Further Actions", value=_sv(row.get("action_timescale", "")))
+                    e_responsible_person = ef_resp.text_input("Responsible Person", value=_sv(row.get("responsible_person", "")))
 
                     ef8, ef9 = st.columns(2)
                     e_res_like = ef8.slider("Residual Likelihood", 1, 5, int(row["residual_likelihood"]))
@@ -1084,8 +1090,8 @@ elif page == "📁 All Assessments":
                     except Exception:
                         _rev_date = date.today() + timedelta(days=90)
                     e_review_date = ef10.date_input("Next Review Date", value=_rev_date)
-                    _stat_idx     = ["Open", "In Progress", "Closed"].index(row["status"])
-                    e_status      = ef11.selectbox("Status", ["Open", "In Progress", "Closed"], index=_stat_idx)
+                    _stat_idx     = _STATUS_OPTS.index(row["status"]) if row["status"] in _STATUS_OPTS else 0
+                    e_status      = ef11.selectbox("Status", _STATUS_OPTS, index=_stat_idx)
 
                     e_edited_by = st.text_input("✏️ Edited by *", placeholder="Your name — required")
 
